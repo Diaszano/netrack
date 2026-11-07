@@ -347,10 +347,12 @@ test("api_client_supports_node_proxy_routing_and_new_endpoints", async () => {
   // Local call
   await client.getStatus();
   assert.equal(calls[calls.length - 1].url, "/api/speedtests/status");
+  assert.equal(client.getEventsUrl(), "/api/speedtests/events");
 
   // Switch active node context to node 10
   client.setActiveNode(10);
   assert.equal(client.getActiveNode(), 10);
+  assert.equal(client.getEventsUrl(), "/api/nodes/10/proxy/speedtests/events");
 
   // Proxied call routes through /api/nodes/10/proxy/...
   await client.getStatus();

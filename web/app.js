@@ -19,6 +19,7 @@ let localesList = [];
 let t = (k) => k;
 let chartTooltipEl = null;
 let authModalEl = null;
+let activeEventSource = null;
 
 const apiClient = createApiClient(globalThis.fetch, {
   onUnauthorized: () => {
@@ -423,10 +424,22 @@ function openMobileMenu() {
  * Connects to the Server-Sent Events stream for live test execution events.
  */
 function setupEventSource() {
+  if (activeEventSource) {
+    try {
+      activeEventSource.close();
+    } catch {}
+    activeEventSource = null;
+  }
+
   if (typeof EventSource === "undefined") return;
+  if (state?.auth?.mode === "protected" && !state?.auth?.authenticated) return;
 
   try {
-    const es = new EventSource("/api/speedtests/events");
+    const eventsUrl = typeof apiClient.getEventsUrl === "function"
+      ? apiClient.getEventsUrl()
+      : "/api/speedtests/events";
+    const es = new EventSource(eventsUrl);
+    activeEventSource = es;
 
     es.onmessage = async (e) => {
       try {
@@ -639,6 +652,7 @@ async function switchActiveNode(nodeId) {
   if (cfg) state.config = cfg;
 
   await loadViewData(state.route);
+  setupEventSource();
   render();
 }
 
@@ -720,6 +734,7 @@ function setupEventDelegation() {
         await apiClient.logout();
         const authSt = await apiClient.getAuthStatus().catch(() => ({ mode: "none", authenticated: false }));
         state.auth = { ...authSt, modalOpen: false, error: null };
+        setupEventSource();
         render();
       } catch (err) {
         state.banner = { kind: "error", text: err.message || "Logout failed" };
@@ -989,6 +1004,7 @@ function setupEventDelegation() {
           state.nodes.items = Array.isArray(nodesList) ? nodesList : [];
         }
         await loadViewData(state.route);
+        setupEventSource();
         render();
       } catch (err) {
         if (!state.auth) state.auth = { mode: "protected", authenticated: false, modalOpen: true, error: null };

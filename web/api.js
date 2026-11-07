@@ -339,6 +339,10 @@ export function createApiClient(fetchImpl = globalThis.fetch, { onUnauthorized }
       return resolveApiUrl(`/api/data/export?format=${encodeURIComponent(format)}`);
     },
 
+    getEventsUrl() {
+      return resolveApiUrl("/api/speedtests/events");
+    },
+
     async getLocales() {
       return request("/locales/index.json", { localOnly: true });
     },
