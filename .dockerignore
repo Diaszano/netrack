@@ -1,0 +1,8 @@
+target
+data
+.git
+.superpowers
+docs
+tests
+*.db
+mcp.json

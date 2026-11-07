@@ -1,0 +1,13 @@
+services:
+  netrack:
+    image: netrack:dev
+    container_name: netrack
+    network_mode: host
+    environment:
+      - TZ=America/Sao_Paulo
+      # - NETRACK_PORT=5216
+      # - RUN_TEST_ON_STARTUP=false
+      # - RUST_LOG=info
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
