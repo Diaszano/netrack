@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AuthContext, SESSION_COOKIE_NAME, SESSION_DURATION_SECS, create_session, delete_all_sessions,
-    delete_session, hash_password, verify_password,
+    delete_session, hash_password, verify_password_async,
 };
 use crate::api::{ApiError, ApiJson, ApiResult, AppState};
 use crate::db::config::{self, PasswordMode};
@@ -56,7 +56,7 @@ async fn login(
 ) -> ApiResult<impl IntoResponse> {
     let cfg = config::load(&s.db).await?;
     if cfg.password_mode != PasswordMode::None
-        && !verify_password(&body.password, &cfg.password_hash)
+        && !verify_password_async(body.password.clone(), cfg.password_hash.clone()).await
     {
         return Err(ApiError::new(StatusCode::UNAUTHORIZED, "invalid password"));
     }
@@ -113,11 +113,10 @@ async fn set_password(
 
     if cfg.password_mode != PasswordMode::None {
         let is_authed = auth.authenticated
-            || body
-                .current_password
-                .as_deref()
-                .map(|p| verify_password(p, &cfg.password_hash))
-                .unwrap_or(false);
+            || match body.current_password.clone() {
+                Some(p) => verify_password_async(p, cfg.password_hash.clone()).await,
+                None => false,
+            };
 
         if !is_authed {
             return Err(ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized"));

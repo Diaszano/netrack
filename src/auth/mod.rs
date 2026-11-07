@@ -32,6 +32,23 @@ pub fn hash_password(password: &str) -> anyhow::Result<String> {
     Ok(hash)
 }
 
+static ARGON_PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+const FAILED_AUTH_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Argon2 on the blocking pool, at most 2 at once; failures wait to slow brute force.
+pub async fn verify_password_async(password: String, hash: String) -> bool {
+    let Ok(_permit) = ARGON_PERMITS.acquire().await else {
+        return false;
+    };
+    let ok = tokio::task::spawn_blocking(move || verify_password(&password, &hash))
+        .await
+        .unwrap_or(false);
+    if !ok {
+        tokio::time::sleep(FAILED_AUTH_DELAY).await;
+    }
+    ok
+}
+
 pub fn verify_password(password: &str, hash: &str) -> bool {
     if hash.is_empty() {
         return false;
@@ -139,7 +156,10 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
         .and_then(|h| h.to_str().ok())
         .and_then(extract_token_from_cookie);
 
+    // Only a Bearer token may be the raw password; a stale cookie must not cost Argon2.
+    let mut from_bearer = false;
     if token.is_none() {
+        from_bearer = true;
         token = req
             .headers()
             .get(header::AUTHORIZATION)
@@ -153,10 +173,11 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
     };
 
     if !authenticated
+        && from_bearer
         && let Some(t) = &token
         && let Ok(cfg) = config::load(&state.db).await
         && cfg.password_mode != PasswordMode::None
-        && verify_password(t, &cfg.password_hash)
+        && verify_password_async(t.clone(), cfg.password_hash.clone()).await
     {
         authenticated = true;
     }

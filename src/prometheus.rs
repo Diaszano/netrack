@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
 use crate::api::{ApiError, AppState};
-use crate::auth::{AuthContext, verify_password};
+use crate::auth::{AuthContext, verify_password_async};
 use crate::db::config::{self, PasswordMode};
 use crate::db::tests_repo::{self, SpeedtestRow};
 
@@ -150,11 +150,15 @@ pub async fn metrics_handler(State(state): State<AppState>, req: Request) -> Res
         let session_valid = auth_ctx.is_some_and(|c| c.authenticated);
 
         let basic_valid = if !session_valid {
-            req.headers()
+            let creds = req
+                .headers()
                 .get(header::AUTHORIZATION)
                 .and_then(|h| h.to_str().ok())
-                .and_then(extract_basic_auth)
-                .is_some_and(|(_user, pass)| verify_password(&pass, &cfg.password_hash))
+                .and_then(extract_basic_auth);
+            match creds {
+                Some((_user, pass)) => verify_password_async(pass, cfg.password_hash.clone()).await,
+                None => false,
+            }
         } else {
             false
         };

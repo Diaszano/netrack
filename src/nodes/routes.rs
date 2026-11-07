@@ -175,12 +175,8 @@ async fn node_status(
     if let Some(pwd) = &node.password
         && !pwd.trim().is_empty()
     {
-        status_req = status_req
-            .header(header::AUTHORIZATION, format!("Bearer {pwd}"))
-            .header(header::COOKIE, format!("netrack_session={pwd}"));
-        speedtests_req = speedtests_req
-            .header(header::AUTHORIZATION, format!("Bearer {pwd}"))
-            .header(header::COOKIE, format!("netrack_session={pwd}"));
+        status_req = status_req.header(header::AUTHORIZATION, format!("Bearer {pwd}"));
+        speedtests_req = speedtests_req.header(header::AUTHORIZATION, format!("Bearer {pwd}"));
     }
 
     let status_resp = status_req.send().await;
@@ -312,20 +308,8 @@ async fn proxy_req(
         && !pwd.trim().is_empty()
     {
         req_builder = req_builder.header(header::AUTHORIZATION, format!("Bearer {pwd}"));
-        let new_cookie = if let Some(cookie_str) = orig_cookie {
-            let mut parts: Vec<&str> = cookie_str
-                .split(';')
-                .map(|s| s.trim())
-                .filter(|s| !s.starts_with("netrack_session="))
-                .collect();
-            let netrack_cookie = format!("netrack_session={pwd}");
-            parts.push(&netrack_cookie);
-            parts.join("; ")
-        } else {
-            format!("netrack_session={pwd}")
-        };
-        req_builder = req_builder.header(header::COOKIE, new_cookie);
-    } else if let Some(cookie_str) = orig_cookie {
+    }
+    if let Some(cookie_str) = orig_cookie {
         let parts: Vec<&str> = cookie_str
             .split(';')
             .map(|s| s.trim())

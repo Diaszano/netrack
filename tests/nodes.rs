@@ -528,11 +528,11 @@ async fn test_transparent_proxy_get_and_post() {
             "Proxy must inject Authorization header"
         );
         assert!(
-            cookie_hdr
+            !cookie_hdr
                 .map(|s| s.as_str())
                 .unwrap_or("")
-                .contains("netrack_session=proxy-secret-token"),
-            "Proxy must inject netrack_session cookie"
+                .contains("proxy-secret-token"),
+            "Proxy must not leak the node password as a cookie"
         );
     }
 

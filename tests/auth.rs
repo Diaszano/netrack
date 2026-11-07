@@ -543,3 +543,74 @@ async fn public_mode_hides_secrets_from_anonymous() {
         .await;
     assert_eq!(status, StatusCode::OK);
 }
+
+async fn protect(app: &TestApp) {
+    app.request(
+        Method::POST,
+        "/api/auth/password",
+        Some(json!({ "password": "password123", "mode": "protected" })),
+        None,
+        None,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn wrong_password_login_is_delayed() {
+    let app = TestApp::new().await;
+    protect(&app).await;
+    let start = std::time::Instant::now();
+    let (status, _, _) = app
+        .request(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "password": "wrong" })),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(start.elapsed() >= std::time::Duration::from_millis(450));
+}
+
+#[tokio::test]
+async fn session_token_does_not_hit_argon() {
+    let app = TestApp::new().await;
+    protect(&app).await;
+    let (_, _, json) = app
+        .request(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "password": "password123" })),
+            None,
+            None,
+        )
+        .await;
+    let cookie = format!("netrack_session={}", json["token"].as_str().unwrap());
+    let start = std::time::Instant::now();
+    for _ in 0..20 {
+        let (status, _, _) = app
+            .request(Method::GET, "/api/speedtests", None, Some(&cookie), None)
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn expired_cookie_is_rejected_fast() {
+    let app = TestApp::new().await;
+    protect(&app).await;
+    let start = std::time::Instant::now();
+    let (status, _, _) = app
+        .request(
+            Method::GET,
+            "/api/speedtests",
+            None,
+            Some("netrack_session=deadbeef"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(start.elapsed() < std::time::Duration::from_millis(200));
+}
