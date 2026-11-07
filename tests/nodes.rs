@@ -608,3 +608,31 @@ async fn proxy_strips_remote_set_cookie() {
     assert_eq!(status, StatusCode::OK);
     assert!(headers.get("set-cookie").is_none());
 }
+
+#[tokio::test]
+async fn proxy_to_unreachable_node_fails_fast() {
+    let app = TestApp::new().await;
+    let (_, _, created) = app
+        .request(
+            Method::POST,
+            "/api/nodes",
+            Some(json!({ "name": "Dead Node", "url": "http://10.255.255.1:9" })),
+            None,
+            None,
+        )
+        .await;
+    let id = created["id"].as_i64().unwrap();
+
+    let started = std::time::Instant::now();
+    let (status, _, _) = app
+        .request(
+            Method::GET,
+            &format!("/api/nodes/{id}/proxy/system/status"),
+            None,
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(started.elapsed() < std::time::Duration::from_secs(7));
+}

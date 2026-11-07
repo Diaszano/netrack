@@ -160,17 +160,12 @@ async fn node_status(
         None => return Err(ApiError::new(StatusCode::NOT_FOUND, "node not found")),
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
     let base_url = node.url.trim_end_matches('/');
     let status_url = format!("{base_url}/api/system/status");
     let speedtests_url = format!("{base_url}/api/speedtests?limit=1");
 
-    let mut status_req = client.get(&status_url);
-    let mut speedtests_req = client.get(&speedtests_url);
+    let mut status_req = s.http.get(&status_url).timeout(Duration::from_secs(5));
+    let mut speedtests_req = s.http.get(&speedtests_url).timeout(Duration::from_secs(5));
 
     if let Some(pwd) = &node.password
         && !pwd.trim().is_empty()
@@ -268,14 +263,10 @@ async fn proxy_req(
         target_path
     };
 
-    let client = reqwest::Client::builder()
-        .build()
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
     let method = reqwest::Method::from_bytes(req.method().as_str().as_bytes())
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    let mut req_builder = client.request(method, &target_url);
+    let mut req_builder = state.http.request(method, &target_url);
 
     let orig_cookie = req
         .headers()

@@ -45,6 +45,8 @@ pub struct AppState {
     pub preview_mode: bool,
     pub preview_message: Option<String>,
     pub version_checker: Arc<crate::version::VersionChecker>,
+    /// Shared outbound client. No total timeout: the node proxy carries SSE.
+    pub http: reqwest::Client,
 }
 
 impl AppState {
@@ -70,6 +72,10 @@ impl AppState {
             preview_mode: false,
             preview_message: None,
             version_checker: Arc::new(crate::version::VersionChecker::default()),
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .build()
+                .expect("static reqwest client configuration is valid"),
         }
     }
 

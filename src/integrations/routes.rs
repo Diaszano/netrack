@@ -145,23 +145,23 @@ async fn test_integration(
         }
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
     let event = IntegrationEvent::Test {
         timestamp: chrono::Utc::now().timestamp_millis(),
     };
 
-    match channels::dispatch(
-        &integration.channel_type,
-        &client,
-        &integration.config,
-        &event,
+    // Channels build their own requests, so the 10s cap wraps the whole dispatch.
+    let sent = tokio::time::timeout(
+        Duration::from_secs(10),
+        channels::dispatch(
+            &integration.channel_type,
+            &s.http,
+            &integration.config,
+            &event,
+        ),
     )
     .await
-    {
+    .unwrap_or_else(|_| Err(anyhow::anyhow!("timed out after 10s")));
+    match sent {
         Ok(()) => Ok(Json(json!({
             "success": true,
             "message": "Notification sent successfully"
