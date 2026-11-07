@@ -564,12 +564,76 @@ button, input, select, textarea {
   text-align: center;
 }
 
-/* Heatmap */
+/* Charts & Heatmap */
+.speed-chart,
+.hourly-chart,
 .heatmap-svg {
   width: 100%;
   height: auto;
-  max-width: 612px;
   display: block;
+}
+
+.heatmap {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 6px 0 2px;
+}
+
+.heatmap-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.heatmap-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.heatmap-weekday {
+  width: 18px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--secondary);
+  text-align: left;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.heatmap-row-cells {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(10px, 1fr));
+  gap: 3px;
+  flex: 1;
+}
+
+.heatmap-cell {
+  height: 18px;
+  border-radius: 3px;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.heatmap-cell:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0 0 1px var(--accent-dl);
+  z-index: 2;
+}
+
+.heatmap-hours {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  padding-left: 26px;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--secondary);
+  user-select: none;
+}
+
+.heatmap-hour {
+  text-align: left;
 }
 
 /* Dense Table */

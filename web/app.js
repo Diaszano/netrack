@@ -1229,10 +1229,32 @@ function setupEventDelegation() {
     }
   });
 
-  // 4. Hover tooltips on chart points
+  // 4. Hover tooltips on chart points and heatmap cells
   document.addEventListener("pointerover", (e) => {
+    if (!chartTooltipEl) return;
+
+    const heatCell = e.target.closest(".heatmap-cell");
+    if (heatCell) {
+      const label = heatCell.getAttribute("title") || "";
+      if (!label) return;
+      chartTooltipEl.innerHTML = `<div>${escapeHtml(label)}</div>`;
+      chartTooltipEl.style.display = "block";
+
+      const rect = heatCell.getBoundingClientRect();
+      const tipWidth = chartTooltipEl.offsetWidth || 120;
+      let left = rect.left + window.scrollX - tipWidth / 2 + rect.width / 2;
+      let top = rect.top + window.scrollY - 36;
+      if (left < 10) left = 10;
+      if (left + tipWidth > window.innerWidth - 10) left = window.innerWidth - tipWidth - 10;
+      if (top < 10) top = rect.bottom + 8;
+
+      chartTooltipEl.style.left = `${left}px`;
+      chartTooltipEl.style.top = `${top}px`;
+      return;
+    }
+
     const point = e.target.closest(".chart-point");
-    if (!point || !chartTooltipEl) return;
+    if (!point) return;
 
     const tMs = point.getAttribute("data-t");
     const dl = point.getAttribute("data-dl");
@@ -1262,8 +1284,8 @@ function setupEventDelegation() {
   });
 
   document.addEventListener("pointerout", (e) => {
-    const point = e.target.closest(".chart-point");
-    if (point && chartTooltipEl) {
+    const target = e.target.closest(".chart-point, .heatmap-cell");
+    if (target && chartTooltipEl) {
       chartTooltipEl.style.display = "none";
     }
   });
