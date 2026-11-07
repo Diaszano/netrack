@@ -334,3 +334,16 @@ fn all_es_module_imports_resolve_to_embedded_assets() {
         "Expected at least 5 module imports checked, found {total_imports}"
     );
 }
+
+#[tokio::test]
+async fn html_has_security_headers() {
+    let app = setup_app().await;
+    let (_, headers, _) = call_raw(&app, Method::GET, "/").await;
+    let h = |n: &str| headers.get(n).and_then(|v| v.to_str().ok()).unwrap_or("");
+    assert_eq!(
+        h("content-security-policy"),
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"
+    );
+    assert_eq!(h("x-frame-options"), "DENY");
+    assert_eq!(h("x-content-type-options"), "nosniff");
+}
