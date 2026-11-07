@@ -1057,11 +1057,11 @@ function setupEventDelegation() {
         const res = await apiClient.importData(text, ct);
         await loadViewData("settings");
         const count = res?.imported ?? 0;
-        const msg = t("settings.importSuccess", { count });
-        state.banner = {
-          kind: "info",
-          text: msg !== "settings.importSuccess" ? msg : `${count} registros importados com sucesso!`,
-        };
+        const skipped = res?.skipped ?? 0;
+        const msg = skipped
+          ? t("data.importSkipped", { imported: count, skipped })
+          : t("settings.importSuccess", { count });
+        state.banner = { kind: "info", text: msg };
         render();
       } catch (err) {
         state.banner = { kind: "error", text: err.message || "Falha na importação" };

@@ -122,11 +122,13 @@ async fn import_data(State(s): State<AppState>, body: axum::body::Bytes) -> ApiR
         }
     };
 
-    let imported = insert_records(&s.db, records)
+    let out = insert_records(&s.db, records)
         .await
         .map_err(|e| ApiError::bad_request(format!("failed to import records: {e}")))?;
 
-    Ok(Json(json!({ "imported": imported })))
+    Ok(Json(
+        json!({ "imported": out.imported, "skipped": out.skipped }),
+    ))
 }
 
 async fn data_stats(State(s): State<AppState>) -> ApiResult<Json<Value>> {

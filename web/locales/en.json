@@ -172,6 +172,7 @@
   "settings.importBtn": "Import file",
   "settings.importSelectFile": "Please select a JSON or CSV file to import.",
   "settings.importSuccess": "{count} records imported successfully!",
+  "data.importSkipped": "{imported} imported, {skipped} already existed",
   "settings.importTitle": "Import history (Netrack JSON/CSV or MySpeed JSON)",
   "settings.language": "Language",
   "settings.languageAuto": "Automatic (browser preference)",

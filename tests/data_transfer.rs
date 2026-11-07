@@ -286,7 +286,7 @@ async fn test_export_and_import_native_roundtrip() {
         .await;
     assert_eq!(import_status, StatusCode::OK);
     let import_json: Value = serde_json::from_str(&import_resp).unwrap();
-    assert_eq!(import_json, json!({ "imported": 2 }));
+    assert_eq!(import_json, json!({ "imported": 2, "skipped": 0 }));
 
     // Verify stats in app2
     let (stats_status, _, stats_resp) = app2.get("/api/data/stats", None).await;
@@ -344,7 +344,7 @@ async fn test_import_myspeed_v1_format() {
         .await;
     assert_eq!(status, StatusCode::OK);
     let resp: Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(resp, json!({ "imported": 3 }));
+    assert_eq!(resp, json!({ "imported": 3, "skipped": 0 }));
 
     // Check stats
     let (stats_status, _, stats_body) = app.get("/api/data/stats", None).await;
@@ -386,7 +386,7 @@ async fn test_import_csv_format() {
         .await;
     assert_eq!(status, StatusCode::OK);
     let resp: Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(resp, json!({ "imported": 2 }));
+    assert_eq!(resp, json!({ "imported": 2, "skipped": 0 }));
 
     let (stats_status, _, stats_body) = app.get("/api/data/stats", None).await;
     assert_eq!(stats_status, StatusCode::OK);
@@ -568,5 +568,55 @@ async fn test_import_larger_than_default_body_limit() {
         .await;
     assert_eq!(status, StatusCode::OK);
     let resp: Value = serde_json::from_str(&resp).unwrap();
-    assert_eq!(resp, json!({ "imported": 10000 }));
+    assert_eq!(resp, json!({ "imported": 10000, "skipped": 0 }));
+}
+
+#[tokio::test]
+async fn test_import_twice_does_not_duplicate() {
+    let app = TestApp::new().await;
+    let base = Utc.with_ymd_and_hms(2026, 11, 7, 12, 0, 0).unwrap();
+    for i in 0..3 {
+        insert_sample_test(
+            &app,
+            Some("S"),
+            100.0,
+            50.0,
+            10.0,
+            1.0,
+            10.0,
+            base + chrono::Duration::hours(i),
+        )
+        .await;
+    }
+    let (_, _, export_body) = app.get("/api/data/export?format=json", None).await;
+    let (status, _, resp) = app
+        .post(
+            "/api/data/import",
+            export_body,
+            Some("application/json"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let resp: Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(resp, json!({ "imported": 0, "skipped": 3 }));
+
+    let (_, _, stats) = app.get("/api/data/stats", None).await;
+    let stats: Value = serde_json::from_str(&stats).unwrap();
+    assert_eq!(stats["rowCount"], 3);
+}
+
+#[tokio::test]
+async fn test_import_duplicates_inside_same_file() {
+    let app = TestApp::new().await;
+    let row = "1,1700000000000,auto,cloudflare,1,SP,h,r,12.0,1.0,150.0,45.0,15.0,\n";
+    let csv = format!(
+        "id,created_at,kind,provider,server_id,server_name,server_host,result_id,ping,jitter,download,upload,duration,error\n{row}{row}"
+    );
+    let (status, _, resp) = app
+        .post("/api/data/import", csv, Some("text/csv"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let resp: Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(resp, json!({ "imported": 1, "skipped": 1 }));
 }
