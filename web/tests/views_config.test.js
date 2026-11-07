@@ -12,6 +12,7 @@ import {
   extractSettingsFormValues,
   onServersSubmit,
   onSettingsSubmit,
+  loadViewData,
 } from "../app.js";
 
 const ptBR = JSON.parse(
@@ -295,5 +296,163 @@ test("settings_retention_days_does_not_silently_reset_empty_input_to_365", () =>
 
   const extracted = extractSettingsFormValues(fd);
   assert.equal(extracted.retentionDays, "", "Empty retentionDays must remain empty string and not be coerced to 365");
+});
+
+test("servers_view_renders_unavailable_option_for_unlisted_configured_interface", () => {
+  // Case A: unlisted interface in pt-BR
+  const stateUnlisted = createMockState({
+    config: {
+      provider: "cloudflare",
+      interface: "eth3",
+    },
+    servers: {
+      interfaces: [
+        { name: "eth0", addrs: ["192.168.1.10"] },
+        { name: "wlan0", addrs: ["192.168.1.50"] },
+      ],
+      libreServers: [],
+      libreError: null,
+    },
+  });
+  const htmlPt = renderServers(stateUnlisted, { t: tPt });
+  assert.ok(
+    htmlPt.includes('<option value="eth3" selected>eth3 (indisponível)</option>'),
+    "Must render unavailable option selected when configured interface is not present in system interfaces"
+  );
+
+  // Case B: unlisted interface with English translation
+  const tEn = createTranslator(en, ptBR);
+  const htmlEn = renderServers(stateUnlisted, { t: tEn });
+  assert.ok(
+    htmlEn.includes('<option value="eth3" selected>eth3 (unavailable)</option>'),
+    "Must render unavailable option in English"
+  );
+
+  // Case C: known interface should NOT render unavailable option
+  const stateListed = createMockState({
+    config: {
+      provider: "cloudflare",
+      interface: "eth0",
+    },
+    servers: {
+      interfaces: [{ name: "eth0", addrs: ["192.168.1.10"] }],
+      libreServers: [],
+    },
+  });
+  const htmlListed = renderServers(stateListed, { t: tPt });
+  assert.ok(!htmlListed.includes("indisponível"), "Must not render unavailable label when interface is present");
+
+  // Case D: 'auto' interface should NOT render unavailable option
+  const stateAuto = createMockState({
+    config: {
+      provider: "cloudflare",
+      interface: "auto",
+    },
+    servers: {
+      interfaces: [{ name: "eth0", addrs: ["192.168.1.10"] }],
+      libreServers: [],
+    },
+  });
+  const htmlAuto = renderServers(stateAuto, { t: tPt });
+  assert.ok(!htmlAuto.includes("indisponível"), "Must not render unavailable label when interface is auto");
+});
+
+test("on_settings_submit_refreshes_status_and_persists_netrack_locale", async () => {
+  const state = createMockState({
+    status: { running: false, paused: false, nextRun: 1762520400000 },
+    config: { cron: "0 * * * *", paused: false },
+    localePreference: "pt-BR",
+  });
+
+  const mockStorage = new Map();
+  const originalLocalStorage = globalThis.localStorage;
+  globalThis.localStorage = {
+    getItem: (k) => mockStorage.get(k) || null,
+    setItem: (k, v) => mockStorage.set(k, String(v)),
+    removeItem: (k) => mockStorage.delete(k),
+  };
+
+  try {
+    let statusCalled = false;
+    const mockClient = {
+      async patchConfig() {
+        return { ok: true };
+      },
+      async getStatus() {
+        statusCalled = true;
+        return { running: false, paused: true, nextRun: null };
+      },
+    };
+
+    const fd = new FormData();
+    fd.append("cron", "0 0 * * *");
+    fd.append("paused", "true");
+    fd.append("locale", "en");
+
+    let localeCallbackFired = false;
+    const result = await onSettingsSubmit(fd, state, mockClient, {
+      t: tPt,
+      onLocaleChange: async () => {
+        localeCallbackFired = true;
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(statusCalled, true, "client.getStatus must be called on settings save success");
+    assert.equal(state.status.paused, true, "state.status must be updated with refreshed status");
+    assert.equal(state.status.nextRun, null);
+    assert.equal(state.localePreference, "en");
+    assert.equal(localeCallbackFired, true);
+    assert.equal(mockStorage.get("netrack.locale"), "en", "Must write to netrack.locale key");
+  } finally {
+    if (originalLocalStorage !== undefined) {
+      globalThis.localStorage = originalLocalStorage;
+    } else {
+      delete globalThis.localStorage;
+    }
+  }
+});
+
+test("load_view_data_recovers_config_for_servers_and_refreshes_status_for_overview", async () => {
+  const state = createMockState({
+    config: null,
+    status: { running: false, paused: false, nextRun: null },
+  });
+
+  let configFetched = false;
+  let statusFetched = false;
+
+  const mockClient = {
+    async getConfig() {
+      configFetched = true;
+      return { provider: "librespeed", interface: "auto", paused: true };
+    },
+    async getInterfaces() {
+      return [{ name: "eth0", addrs: ["10.0.0.1"] }];
+    },
+    async getLibreServers() {
+      return [];
+    },
+    async listSpeedtests() {
+      return [];
+    },
+    async getStatistics() {
+      return null;
+    },
+    async getStatus() {
+      statusFetched = true;
+      return { running: false, paused: true, nextRun: null };
+    },
+  };
+
+  // 1. servers route lazy config recovery
+  await loadViewData("servers", mockClient, state);
+  assert.equal(configFetched, true, "getConfig must be called when state.config is null on servers route");
+  assert.deepEqual(state.config, { provider: "librespeed", interface: "auto", paused: true });
+
+  // 2. overview route status refresh
+  await loadViewData("overview", mockClient, state);
+  assert.equal(statusFetched, true, "getStatus must be called on overview route");
+  assert.equal(state.status.paused, true, "state.status.paused must be refreshed");
 });
 

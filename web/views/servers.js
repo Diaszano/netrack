@@ -89,12 +89,17 @@ export function renderServers(state, { t = (k) => k } = {}) {
 </div>`;
 
   // 3. Network interface selector card
+  const ifaceInList = currentIface && currentIface !== "auto" && interfaces.some((i) => i.name === currentIface);
   let ifaceOptionsHtml = `<option value="auto"${currentIface === "auto" || !currentIface ? " selected" : ""}>${escapeHtml(t("servers.interfaceAuto") || "Automático (padrão do sistema)")}</option>`;
   for (const iface of interfaces) {
     const isSel = iface.name === currentIface;
     const addrs = Array.isArray(iface.addrs) ? iface.addrs : [];
     const label = addrs.length > 0 ? `${iface.name} (${addrs.join(", ")})` : iface.name;
     ifaceOptionsHtml += `\n<option value="${escapeHtml(iface.name)}"${isSel ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  }
+  if (currentIface && currentIface !== "auto" && !ifaceInList) {
+    const unavailText = t("servers.unavailable") || "indisponível";
+    ifaceOptionsHtml += `\n<option value="${escapeHtml(currentIface)}" selected>${escapeHtml(currentIface)} (${escapeHtml(unavailText)})</option>`;
   }
 
   const interfaceCardHtml = `<div class="card">

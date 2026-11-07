@@ -12,6 +12,7 @@ import {
   applyRunEvent,
   parseRoute,
 } from "../state.js";
+import { setupI18n } from "../app.js";
 
 test("apply_run_event_transitions_running_and_triggers_refresh", () => {
   const initial = createInitialState();
@@ -259,4 +260,57 @@ test("api_client_methods_dispatch_correct_urls_and_methods", async () => {
   await client.getLocaleDict("pt-BR");
   assert.equal(calls[calls.length - 1].url, "/locales/pt-BR.json");
   assert.equal(calls[calls.length - 1].method, "GET");
+});
+
+test("setup_i18n_reads_netrack_locale_and_falls_back_to_legacy_key", async () => {
+  const originalLocalStorage = globalThis.localStorage;
+  const mockStorage = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => mockStorage.get(k) || null,
+    setItem: (k, v) => mockStorage.set(k, String(v)),
+    removeItem: (k) => mockStorage.delete(k),
+  };
+
+  const mockClient = {
+    async getLocales() {
+      return [
+        { code: "pt-BR", name: "Português (Brasil)" },
+        { code: "en", name: "English" },
+      ];
+    },
+    async getLocaleDict() {
+      return {};
+    },
+  };
+
+  try {
+    // 1. Reading modern key "netrack.locale"
+    mockStorage.set("netrack.locale", "en");
+    mockStorage.delete("netrack_locale");
+    const stateA = createInitialState();
+    await setupI18n(mockClient, stateA);
+    assert.equal(stateA.localePreference, "en");
+    assert.equal(stateA.locale, "en");
+
+    // 2. Fallback to legacy key "netrack_locale" when modern key is absent
+    mockStorage.delete("netrack.locale");
+    mockStorage.set("netrack_locale", "en");
+    const stateB = createInitialState();
+    await setupI18n(mockClient, stateB);
+    assert.equal(stateB.localePreference, "en");
+    assert.equal(stateB.locale, "en");
+
+    // 3. When neither is present, defaults to "auto"
+    mockStorage.delete("netrack.locale");
+    mockStorage.delete("netrack_locale");
+    const stateC = createInitialState();
+    await setupI18n(mockClient, stateC);
+    assert.equal(stateC.localePreference, "auto");
+  } finally {
+    if (originalLocalStorage !== undefined) {
+      globalThis.localStorage = originalLocalStorage;
+    } else {
+      delete globalThis.localStorage;
+    }
+  }
 });

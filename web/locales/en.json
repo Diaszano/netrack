@@ -88,6 +88,7 @@
   "servers.providerCloudflare": "Cloudflare",
   "servers.providerLibrespeed": "LibreSpeed",
   "servers.title": "Servers",
+  "servers.unavailable": "unavailable",
   "settings.cron": "Cron expression",
   "settings.cronHelp": "Sets the run interval (e.g. 0 * * * * to run every hour)",
   "settings.expectedDownload": "Expected download (Mbps)",

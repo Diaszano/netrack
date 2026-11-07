@@ -21,9 +21,9 @@ let chartTooltipEl = null;
 /**
  * Initializes i18n catalogs and translator.
  */
-async function setupI18n() {
+export async function setupI18n(customClient = apiClient, targetState = state) {
   try {
-    localesList = await apiClient.getLocales();
+    localesList = await customClient.getLocales();
   } catch {
     localesList = [
       { code: "pt-BR", name: "Português (Brasil)" },
@@ -32,8 +32,10 @@ async function setupI18n() {
   }
 
   const availableCodes = localesList.map((l) => l.code);
-  const savedPref = localStorage.getItem("netrack_locale");
-  state.localePreference = savedPref || "auto";
+  const savedPref = typeof localStorage !== "undefined"
+    ? (localStorage.getItem("netrack.locale") || localStorage.getItem("netrack_locale"))
+    : null;
+  targetState.localePreference = savedPref || "auto";
 
   const navLangs = typeof navigator !== "undefined" && navigator.languages
     ? navigator.languages
@@ -46,17 +48,17 @@ async function setupI18n() {
     defaultLocale: "pt-BR",
   });
 
-  state.locale = resolved;
+  targetState.locale = resolved;
 
   let dict = {};
   let fallbackDict = {};
   try {
-    dict = await apiClient.getLocaleDict(resolved);
+    dict = await customClient.getLocaleDict(resolved);
   } catch {}
 
   if (resolved !== "pt-BR") {
     try {
-      fallbackDict = await apiClient.getLocaleDict("pt-BR");
+      fallbackDict = await customClient.getLocaleDict("pt-BR");
     } catch {}
   }
 
@@ -70,63 +72,70 @@ async function setupI18n() {
 /**
  * Loads data required for the specified route.
  */
-async function loadViewData(route) {
+export async function loadViewData(route, client = apiClient, appState = state) {
   try {
     switch (route) {
       case "overview": {
-        const [recent, stats] = await Promise.all([
-          apiClient.listSpeedtests({ limit: 10 }).catch(() => []),
+        const [recent, stats, status] = await Promise.all([
+          client.listSpeedtests({ limit: 10 }).catch(() => []),
           (async () => {
-            const range = dateRangeForPreset("7d", Date.now(), state.system.tz);
-            return apiClient.getStatistics(range.from, range.to).catch(() => null);
+            const range = dateRangeForPreset("7d", Date.now(), appState?.system?.tz);
+            return client.getStatistics(range.from, range.to).catch(() => null);
           })(),
+          typeof client.getStatus === "function" ? client.getStatus().catch(() => null) : Promise.resolve(null),
         ]);
-        state.recentTests = recent || [];
-        state.overviewStats = stats;
+        appState.recentTests = recent || [];
+        appState.overviewStats = stats;
+        if (status) {
+          appState.status = status;
+        }
         break;
       }
       case "statistics": {
-        const preset = state.statsRange.preset || "7d";
-        if (!state.statsRange.from || !state.statsRange.to) {
-          const range = dateRangeForPreset(preset, Date.now(), state.system.tz);
-          state.statsRange.from = range.from;
-          state.statsRange.to = range.to;
+        const preset = appState.statsRange.preset || "7d";
+        if (!appState.statsRange.from || !appState.statsRange.to) {
+          const range = dateRangeForPreset(preset, Date.now(), appState?.system?.tz);
+          appState.statsRange.from = range.from;
+          appState.statsRange.to = range.to;
         }
-        state.statsData = await apiClient.getStatistics(
-          state.statsRange.from,
-          state.statsRange.to
+        appState.statsData = await client.getStatistics(
+          appState.statsRange.from,
+          appState.statsRange.to
         ).catch(() => null);
         break;
       }
       case "history": {
-        state.history.loading = true;
-        const rows = await apiClient.listSpeedtests({ limit: 50 }).catch(() => []);
-        state.history.rows = rows || [];
-        state.history.hasMore = (rows || []).length >= 50;
-        state.history.loading = false;
+        appState.history.loading = true;
+        const rows = await client.listSpeedtests({ limit: 50 }).catch(() => []);
+        appState.history.rows = rows || [];
+        appState.history.hasMore = (rows || []).length >= 50;
+        appState.history.loading = false;
         break;
       }
       case "servers": {
+        if (!appState.config) {
+          appState.config = await client.getConfig().catch(() => null);
+        }
         const [ifaces, libre] = await Promise.all([
-          apiClient.getInterfaces().catch(() => []),
-          apiClient.getLibreServers().then(
+          client.getInterfaces().catch(() => []),
+          client.getLibreServers().then(
             (res) => ({ ok: true, data: res }),
             (err) => ({ ok: false, error: err.message || "Failed to load LibreSpeed servers" })
           ),
         ]);
-        state.servers.interfaces = ifaces || [];
+        appState.servers.interfaces = ifaces || [];
         if (libre.ok) {
-          state.servers.libreServers = libre.data || [];
-          state.servers.libreError = null;
+          appState.servers.libreServers = libre.data || [];
+          appState.servers.libreError = null;
         } else {
-          state.servers.libreServers = [];
-          state.servers.libreError = libre.error;
+          appState.servers.libreServers = [];
+          appState.servers.libreError = libre.error;
         }
         break;
       }
       case "settings": {
-        if (!state.config) {
-          state.config = await apiClient.getConfig().catch(() => null);
+        if (!appState.config) {
+          appState.config = await client.getConfig().catch(() => null);
         }
         break;
       }
@@ -446,7 +455,10 @@ export async function onSettingsSubmit(formData, appState, client, { t = (k) => 
   const newLocale = formData.get("locale");
   if (newLocale && newLocale !== appState?.localePreference) {
     if (typeof localStorage !== "undefined") {
-      localStorage.setItem("netrack_locale", newLocale);
+      localStorage.setItem("netrack.locale", newLocale);
+    }
+    if (appState) {
+      appState.localePreference = newLocale;
     }
     if (typeof onLocaleChange === "function") {
       await onLocaleChange(newLocale);
@@ -458,6 +470,14 @@ export async function onSettingsSubmit(formData, appState, client, { t = (k) => 
     if (appState) {
       appState.config = { ...appState.config, ...formValues };
       appState.banner = { kind: "info", text: t("settings.saveSuccess") || "Ajustes salvos com sucesso!" };
+      if (typeof client?.getStatus === "function") {
+        try {
+          const freshStatus = await client.getStatus();
+          if (freshStatus) {
+            appState.status = freshStatus;
+          }
+        } catch {}
+      }
     }
     if (typeof onSaveSuccess === "function") {
       onSaveSuccess(result);

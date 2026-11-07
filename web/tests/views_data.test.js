@@ -280,6 +280,17 @@ test("overview_status_pill_and_running_button_state", () => {
     nextRunHtml.includes("Próximo teste"),
     "overview must display next run notice when nextRun is set"
   );
+
+  // 4. When status.paused is nullish, falls back to config.paused
+  const fallbackState = createMockState({
+    status: { running: false, nextRun: null },
+    config: { paused: true },
+  });
+  const fallbackHtml = renderOverview(fallbackState, { t: tPt });
+  assert.ok(
+    fallbackHtml.includes("Agendamento pausado"),
+    "overview must display paused pill when status.paused is nullish and config.paused is true"
+  );
 });
 
 test("statistics_preset_bar_and_kpis_and_metric_cards", () => {

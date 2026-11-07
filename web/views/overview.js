@@ -28,7 +28,8 @@ export function renderOverview(state, { t = (k) => k } = {}) {
   // 1. Header with title, pause/next-run status pill, and test trigger button
   const title = t("overview.title") || "Visão geral";
   let pillText = "";
-  if (state?.status?.paused) {
+  const isPaused = Boolean(state?.status?.paused ?? state?.config?.paused);
+  if (isPaused) {
     pillText = t("overview.pausedNotice") || "Agendamento pausado";
   } else if (state?.status?.nextRun) {
     const nextTime = formatTime(state.status.nextRun, locale, tz);
