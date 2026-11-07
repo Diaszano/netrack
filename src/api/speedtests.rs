@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use futures::{Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -15,7 +15,7 @@ use super::{ApiError, ApiPath, ApiQuery, ApiResult, AppState};
 use crate::db::config;
 use crate::db::stats::{self, Statistics};
 use crate::db::tests_repo::{self, SpeedtestRow, TestKind};
-use crate::runner::{RunError, RunEvent};
+use crate::runner::RunEvent;
 
 const DEFAULT_LIMIT: u32 = 30;
 
@@ -64,17 +64,17 @@ async fn delete_one(State(s): State<AppState>, ApiPath(id): ApiPath<i64>) -> Api
 }
 
 async fn run(State(s): State<AppState>) -> ApiResult<(StatusCode, Json<Value>)> {
-    if s.runner.is_running() {
-        return Err(ApiError::new(StatusCode::CONFLICT, "test already running"));
-    }
+    // Acquired here, not in the task, so concurrent requests cannot both get 202.
+    let guard = s
+        .runner
+        .try_acquire()
+        .map_err(|_| ApiError::new(StatusCode::CONFLICT, "test already running"))?;
     // Detached on purpose: awaiting the run in the request would let a client
     // disconnect drop it mid-flight while the provider keeps going.
     let runner = s.runner.clone();
     tokio::spawn(async move {
-        match runner.run(TestKind::Custom).await {
-            Ok(_) => {}
-            Err(RunError::Busy) => tracing::info!("manual test skipped: one is already running"),
-            Err(e) => tracing::error!(error = %e, "manual test failed"),
+        if let Err(e) = runner.run_with_guard(guard, TestKind::Custom).await {
+            tracing::error!(error = %e, "manual test failed");
         }
     });
     Ok((StatusCode::ACCEPTED, Json(json!({ "status": "started" }))))
@@ -113,8 +113,12 @@ struct RangeQuery {
 
 fn parse_date(name: &str, v: Option<&str>) -> Result<NaiveDate, ApiError> {
     let v = v.ok_or_else(|| ApiError::bad_request(format!("missing query parameter: {name}")))?;
+    // Four-digit years only: chrono also accepts signed years up to its own
+    // limits, where the range end (next midnight) is not representable.
     NaiveDate::parse_from_str(v, "%Y-%m-%d")
-        .map_err(|_| ApiError::bad_request(format!("{name} must be a YYYY-MM-DD date")))
+        .ok()
+        .filter(|d| (1..=9999).contains(&d.year()))
+        .ok_or_else(|| ApiError::bad_request(format!("{name} must be a YYYY-MM-DD date")))
 }
 
 async fn statistics(

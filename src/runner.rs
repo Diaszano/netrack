@@ -30,8 +30,9 @@ pub enum RunEvent {
         id: i64,
         metrics: Metrics,
     },
+    /// `id` is `None` (serialized as `null`) when no row could be stored.
     Failed {
-        id: i64,
+        id: Option<i64>,
         error: String,
     },
     ExpectedUpdated {
@@ -59,10 +60,11 @@ pub struct Runner {
     events: broadcast::Sender<RunEvent>,
 }
 
-/// Releases the busy flag on drop, including during unwinding.
-struct BusyGuard(Arc<AtomicBool>);
+/// Exclusive right to run a test, from [`Runner::try_acquire`]. Releases the
+/// busy flag on drop, including during unwinding.
+pub struct RunGuard(Arc<AtomicBool>);
 
-impl Drop for BusyGuard {
+impl Drop for RunGuard {
     fn drop(&mut self) {
         self.0.store(false, Ordering::SeqCst);
     }
@@ -97,19 +99,45 @@ impl Runner {
         let _ = self.events.send(event);
     }
 
+    /// Takes the single-flight lock without waiting; `Busy` if a test runs.
+    pub fn try_acquire(&self) -> Result<RunGuard, RunError> {
+        if self.busy.swap(true, Ordering::SeqCst) {
+            return Err(RunError::Busy);
+        }
+        Ok(RunGuard(self.busy.clone()))
+    }
+
     /// Runs one test (with a single retry on failure) and returns the id of
     /// the stored row. A failed test is stored too; only infrastructure
     /// problems surface as `Err`.
     pub async fn run(&self, kind: TestKind) -> Result<i64, RunError> {
-        if self.busy.swap(true, Ordering::SeqCst) {
-            return Err(RunError::Busy);
-        }
-        let _guard = BusyGuard(self.busy.clone());
-        self.emit(RunEvent::Started { kind });
-        let started = Instant::now();
+        let guard = self.try_acquire()?;
+        self.run_with_guard(guard, kind).await
+    }
 
+    /// [`Runner::run`] with the lock already held; the lock is released when
+    /// the run ends. Every `Started` event is followed by `Finished` or `Failed`.
+    pub async fn run_with_guard(&self, _guard: RunGuard, kind: TestKind) -> Result<i64, RunError> {
+        let started = Instant::now();
         let cfg = config::load(&self.db).await?;
-        let provider: Arc<dyn SpeedProvider> = Arc::from((self.provider_factory)(&cfg));
+        self.emit(RunEvent::Started { kind });
+        let result = self.run_loaded(&cfg, kind, started).await;
+        if let Err(e) = &result {
+            self.emit(RunEvent::Failed {
+                id: None,
+                error: e.to_string(),
+            });
+        }
+        result
+    }
+
+    async fn run_loaded(
+        &self,
+        cfg: &AppConfig,
+        kind: TestKind,
+        started: Instant,
+    ) -> Result<i64, RunError> {
+        let provider: Arc<dyn SpeedProvider> = Arc::from((self.provider_factory)(cfg));
         let opts = RunOptions {
             local_addr: net::resolve_local_addr(cfg.interface.as_deref()),
             throughput: ThroughputConfig::default(),
@@ -145,7 +173,10 @@ impl Runner {
                     tracing::warn!(error = %e, "failed to update expected values");
                 }
             }
-            Err(error) => self.emit(RunEvent::Failed { id, error }),
+            Err(error) => self.emit(RunEvent::Failed {
+                id: Some(id),
+                error,
+            }),
         }
         Ok(id)
     }

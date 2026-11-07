@@ -119,7 +119,9 @@ async fn runner_records_failure_after_one_retry() {
     assert_eq!(rows.len(), 1);
     assert!(rows[0].error.as_deref().unwrap().contains("down"));
     let _ = rx.recv().await.unwrap();
-    assert!(matches!(rx.recv().await.unwrap(), RunEvent::Failed { id: eid, .. } if eid == id));
+    assert!(
+        matches!(rx.recv().await.unwrap(), RunEvent::Failed { id: eid, .. } if eid == Some(id))
+    );
 }
 
 #[tokio::test]
@@ -213,4 +215,82 @@ async fn expected_values_manual_unchanged() {
     assert_eq!(before.expected_ping, after.expected_ping);
     assert_eq!(before.expected_download, after.expected_download);
     assert_eq!(before.expected_upload, after.expected_upload);
+}
+
+#[tokio::test]
+async fn insert_failure_after_started_emits_failed() {
+    let p = FakeProvider::new(vec![]);
+    let (db, runner) = setup(&p).await;
+    db.call(|c| {
+        c.execute_batch("DROP TABLE speedtests")?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let mut rx = runner.subscribe();
+    assert!(matches!(
+        runner.run(TestKind::Auto).await,
+        Err(RunError::Internal(_))
+    ));
+    assert!(matches!(rx.try_recv().unwrap(), RunEvent::Started { .. }));
+    match rx.try_recv().expect("a terminal event after Started") {
+        RunEvent::Failed { id, error } => {
+            assert_eq!(id, None);
+            assert!(!error.is_empty());
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    assert!(!runner.is_running());
+}
+
+#[tokio::test]
+async fn config_load_failure_emits_no_started() {
+    let p = FakeProvider::new(vec![]);
+    let (db, runner) = setup(&p).await;
+    db.call(|c| {
+        c.execute(
+            "INSERT INTO config (key, value) VALUES ('paused', 'garbage') \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let mut rx = runner.subscribe();
+    assert!(runner.run(TestKind::Auto).await.is_err());
+    assert!(rx.try_recv().is_err(), "no event without a started run");
+    assert_eq!(p.calls.load(Ordering::SeqCst), 0);
+    assert!(!runner.is_running());
+}
+
+#[tokio::test]
+async fn failed_event_without_row_serializes_null_id() {
+    let ev = RunEvent::Failed {
+        id: None,
+        error: "db".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&ev).unwrap(),
+        serde_json::json!({ "type": "failed", "id": null, "error": "db" })
+    );
+}
+
+#[tokio::test]
+async fn try_acquire_is_exclusive_until_guard_dropped() {
+    let p = FakeProvider::new(vec![]);
+    let (_db, runner) = setup(&p).await;
+    let guard = runner.try_acquire().unwrap();
+    assert!(runner.is_running());
+    assert!(matches!(runner.try_acquire(), Err(RunError::Busy)));
+    assert!(matches!(
+        runner.run(TestKind::Auto).await,
+        Err(RunError::Busy)
+    ));
+    let id = runner
+        .run_with_guard(guard, TestKind::Custom)
+        .await
+        .unwrap();
+    assert!(id > 0);
+    assert!(!runner.is_running());
 }

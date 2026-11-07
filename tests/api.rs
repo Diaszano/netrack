@@ -158,6 +158,18 @@ async fn run_while_running_is_409() {
 }
 
 #[tokio::test]
+async fn concurrent_run_posts_start_only_one() {
+    let ctx = setup(Duration::from_millis(500)).await;
+    let ((a, _), (b, _)) = tokio::join!(
+        call(&ctx.app, Method::POST, "/api/speedtests/run", None),
+        call(&ctx.app, Method::POST, "/api/speedtests/run", None),
+    );
+    let mut got = [a, b];
+    got.sort();
+    assert_eq!(got, [StatusCode::ACCEPTED, StatusCode::CONFLICT]);
+}
+
+#[tokio::test]
 async fn patch_config_invalid_is_400_with_message() {
     let ctx = setup(Duration::ZERO).await;
     let (status, body) = call(
@@ -228,6 +240,34 @@ async fn statistics_bad_range_is_400() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"], 0);
+}
+
+#[tokio::test]
+async fn statistics_out_of_range_dates_are_400() {
+    let ctx = setup(Duration::ZERO).await;
+    let (status, _) = call(
+        &ctx.app,
+        Method::GET,
+        "/api/speedtests/statistics?from=2026-01-01&to=9999-12-31",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // The last representable date has no following midnight to end the range.
+    for range in [
+        "from=2026-01-01&to=%2B262142-12-31",
+        "from=%2B262142-12-31&to=%2B262142-12-31",
+    ] {
+        let (status, body) = call(
+            &ctx.app,
+            Method::GET,
+            &format!("/api/speedtests/statistics?{range}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{range}: {body}");
+        assert!(body["error"].is_string());
+    }
 }
 
 #[tokio::test]
