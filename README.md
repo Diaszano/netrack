@@ -27,7 +27,7 @@ nomeado do Docker, as permissões já vêm corretas da imagem.
 |---|---|---|
 | `NETRACK_PORT` | `5216` | Porta HTTP (escuta em `0.0.0.0` e `[::]`) |
 | `NETRACK_DATA_DIR` | `/data` | Onde fica o banco SQLite |
-| `TZ` | `UTC` | Fuso horário usado no agendamento (ex.: `America/Sao_Paulo`) |
+| `TZ` | `UTC` | Fuso horário usado no agendamento (ex.: `America/Sao_Paulo`); vazio = `UTC` |
 | `RUN_TEST_ON_STARTUP` | `false` | Executa um teste ao iniciar |
 | `RUST_LOG` | `info` | Nível de log (`info`, `debug`, ...) |
 
@@ -57,24 +57,35 @@ Alvo: Orange Pi Zero 3. Resultados **pendentes** (requer o hardware).
 
 Procedimento de aceite:
 
-1. Suba o netrack no Pi com `network_mode: host` (compose acima).
-2. Execute 3 testes: `curl -XPOST http://<pi>:5216/api/speedtests/run`, aguarde
-   terminar (`/api/speedtests/status`) e anote download/upload de
+1. Gere a imagem multi-arquitetura (requer `docker buildx`):
+   `docker buildx build --platform linux/arm64,linux/amd64 -t netrack:dev .`
+2. Suba o netrack no Pi com `network_mode: host` (compose acima).
+3. Execute 3 testes: `curl -XPOST http://<pi>:5216/api/speedtests/run`, aguarde
+   terminar (`/api/speedtests/status`) e anote ping, download e upload de
    `GET /api/speedtests`.
-3. Compare com https://speed.cloudflare.com em um navegador num PC cabeado, na
-   mesma rede e momento. Aceite: diferença dentro de ±10%.
-4. Durante um teste, rode `top` no Pi e anote o pico de CPU. Aceite: < 80%.
-5. Em repouso, leia `rssBytes` em `GET /api/system/status`. Aceite: < 30 MB.
-6. Meça `time curl -s 'http://<pi>:5216/api/speedtests/statistics?from=AAAA-MM-DD&to=AAAA-MM-DD'`
+4. Compare com https://speed.cloudflare.com em um navegador num PC cabeado, na
+   mesma rede e momento. Aceite: download e upload dentro de ±10%; ping dentro
+   de ±5 ms.
+5. Upload: confira com atenção. O netrack conta os bytes de upload quando são
+   entregues ao cliente HTTP, não quando o servidor confirma o recebimento; um
+   upload consistentemente acima do Cloudflare indica contagem superestimada e
+   precisa ser corrigido antes de aceitar.
+6. Durante um teste, rode `top` no Pi e anote o pico de CPU do processo
+   `netrack`. Aceite: < 80% de UM núcleo (no `top`, 100% = 1 núcleo; o Pi Zero 3
+   tem 4 núcleos, então o máximo possível é 400%).
+7. Em repouso, leia `rssBytes` em `GET /api/system/status`. Aceite: < 30 MB.
+8. Meça `time curl -s 'http://<pi>:5216/api/speedtests/statistics?from=AAAA-MM-DD&to=AAAA-MM-DD'`
    com histórico de 1 ano e anote o tempo.
 
 | Item | Execução 1 | Execução 2 | Execução 3 | Aceite |
 |---|---|---|---|---|
+| Ping (ms), netrack | pendente | pendente | pendente | ±5 ms do Cloudflare |
+| Ping (ms), speed.cloudflare.com | pendente | pendente | pendente | |
 | Download (Mbps), netrack | pendente | pendente | pendente | ±10% do Cloudflare |
 | Download (Mbps), speed.cloudflare.com | pendente | pendente | pendente | |
 | Upload (Mbps), netrack | pendente | pendente | pendente | ±10% do Cloudflare |
 | Upload (Mbps), speed.cloudflare.com | pendente | pendente | pendente | |
-| Pico de CPU (`top`) | pendente | pendente | pendente | < 80% |
+| Pico de CPU do processo (`top`) | pendente | pendente | pendente | < 80% de um núcleo |
 
 | Item | Resultado | Aceite |
 |---|---|---|
