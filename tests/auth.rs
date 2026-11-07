@@ -489,3 +489,57 @@ async fn expired_session_token_is_rejected() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(json, json!({ "error": "unauthorized" }));
 }
+
+#[tokio::test]
+async fn public_mode_hides_secrets_from_anonymous() {
+    let app = TestApp::new().await;
+    let (status, _, _) = app
+        .request(
+            Method::POST,
+            "/api/auth/password",
+            Some(json!({ "password": "pw", "mode": "public" })),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    for uri in [
+        "/api/integrations",
+        "/api/nodes",
+        "/api/data/export",
+        "/api/data/stats",
+    ] {
+        let (status, _, json) = app.request(Method::GET, uri, None, None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
+        assert_eq!(json, json!({ "error": "unauthorized" }), "{uri}");
+    }
+    for uri in ["/api/speedtests", "/api/config"] {
+        let (status, _, _) = app.request(Method::GET, uri, None, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+    }
+
+    let (status, headers, _) = app
+        .request(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "password": "pw" })),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let cookie = headers
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let (status, _, _) = app
+        .request(Method::GET, "/api/integrations", None, Some(&cookie), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}

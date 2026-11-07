@@ -166,7 +166,7 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
         token,
     });
 
-    let path = req.uri().path();
+    let path = req.uri().path().to_owned();
     // Specific API route exemptions
     if path == "/api/auth/login" || path == "/api/auth/status" || path == "/api/prometheus/metrics"
     {
@@ -180,11 +180,11 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
     match cfg.password_mode {
         PasswordMode::None => next.run(req).await,
         PasswordMode::Public => {
-            if matches!(
+            let read_only = matches!(
                 req.method(),
                 &Method::GET | &Method::HEAD | &Method::OPTIONS
-            ) || authenticated
-            {
+            );
+            if (read_only && !requires_auth_in_public(&path)) || authenticated {
                 next.run(req).await
             } else {
                 ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized").into_response()
@@ -198,4 +198,11 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
             }
         }
     }
+}
+
+/// Secrets-bearing routes stay behind login even for GETs in public mode.
+fn requires_auth_in_public(path: &str) -> bool {
+    ["/api/integrations", "/api/nodes", "/api/data"]
+        .iter()
+        .any(|p| path.starts_with(p))
 }
