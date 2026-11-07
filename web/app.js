@@ -10,13 +10,27 @@ import { renderStatistics } from "./views/statistics.js";
 import { renderHistory } from "./views/history.js";
 import { renderServers } from "./views/servers.js";
 import { renderSettings, saveConfigDiff } from "./views/settings.js";
-import { renderNodes, renderIntegrations } from "./views/seams.js";
+import { renderNodes, renderNodeSwitcher, extractNodePayload } from "./views/nodes.js";
+import { renderIntegrations, extractIntegrationPayload, renderChannelConfigFields } from "./views/integrations.js";
+import { renderAuthModal, renderAuthStatusBadge } from "./views/auth.js";
 
-const apiClient = createApiClient();
 let state = createInitialState();
 let localesList = [];
 let t = (k) => k;
 let chartTooltipEl = null;
+let authModalEl = null;
+
+const apiClient = createApiClient(globalThis.fetch, {
+  onUnauthorized: () => {
+    if (!state.auth) {
+      state.auth = { mode: "protected", authenticated: false, modalOpen: true, error: null };
+    } else {
+      state.auth.authenticated = false;
+      state.auth.modalOpen = true;
+    }
+    render();
+  },
+});
 
 /**
  * Initializes i18n catalogs and translator.
@@ -116,12 +130,15 @@ export async function loadViewData(route, client = apiClient, appState = state) 
         if (!appState.config) {
           appState.config = await client.getConfig().catch(() => null);
         }
-        const [ifaces, libre] = await Promise.all([
+        const [ifaces, libre, ooklaSt] = await Promise.all([
           client.getInterfaces().catch(() => []),
           client.getLibreServers().then(
             (res) => ({ ok: true, data: res }),
             (err) => ({ ok: false, error: err.message || "Failed to load LibreSpeed servers" })
           ),
+          typeof client.getOoklaStatus === "function"
+            ? client.getOoklaStatus().catch(() => null)
+            : Promise.resolve(null),
         ]);
         appState.servers.interfaces = ifaces || [];
         if (libre.ok) {
@@ -131,16 +148,65 @@ export async function loadViewData(route, client = apiClient, appState = state) 
           appState.servers.libreServers = [];
           appState.servers.libreError = libre.error;
         }
-        break;
-      }
-      case "settings": {
-        if (!appState.config) {
-          appState.config = await client.getConfig().catch(() => null);
+        if (ooklaSt) {
+          appState.servers.ooklaStatus = ooklaSt;
+          if (ooklaSt.installed && typeof client.getOoklaServers === "function") {
+            const ooklaSrvs = await client.getOoklaServers().then(
+              (res) => ({ ok: true, data: res }),
+              (err) => ({ ok: false, error: err.message || "Failed to load Ookla servers" })
+            );
+            if (ooklaSrvs.ok) {
+              appState.servers.ooklaServers = ooklaSrvs.data || [];
+              appState.servers.ooklaError = null;
+            } else {
+              appState.servers.ooklaServers = [];
+              appState.servers.ooklaError = ooklaSrvs.error;
+            }
+          }
         }
         break;
       }
-      case "nodes":
-      case "integrations":
+      case "settings": {
+        const [cfg, dataStats] = await Promise.all([
+          !appState.config ? client.getConfig().catch(() => null) : Promise.resolve(appState.config),
+          typeof client.getDataStats === "function" ? client.getDataStats().catch(() => null) : Promise.resolve(null),
+        ]);
+        if (cfg) appState.config = cfg;
+        if (dataStats) appState.dataStats = dataStats;
+        break;
+      }
+      case "integrations": {
+        if (!appState.integrations) {
+          appState.integrations = { items: [], editing: null, selectedChannel: "discord" };
+        }
+        if (typeof client.listIntegrations === "function") {
+          const items = await client.listIntegrations().catch(() => []);
+          appState.integrations.items = items || [];
+        }
+        break;
+      }
+      case "nodes": {
+        if (!appState.nodes) {
+          appState.nodes = { activeNodeId: null, items: [], statuses: {}, editing: null };
+        }
+        if (typeof client.listNodes === "function") {
+          const nodesList = await client.listNodes().catch(() => []);
+          appState.nodes.items = nodesList || [];
+          if (typeof client.getNodeStatus === "function" && Array.isArray(nodesList)) {
+            await Promise.all(
+              nodesList.map(async (n) => {
+                try {
+                  const st = await client.getNodeStatus(n.id);
+                  appState.nodes.statuses[n.id] = st;
+                } catch (err) {
+                  appState.nodes.statuses[n.id] = { online: false, error: err.message };
+                }
+              })
+            );
+          }
+        }
+        break;
+      }
       default:
         break;
     }
@@ -176,13 +242,58 @@ function updateSidebarFooter() {
 }
 
 /**
- * Updates the topbar title and action area.
+ * Updates the topbar title and action area (node switcher + auth login/logout badge).
  */
 function updateTopbar() {
   const pageTitleEl = document.getElementById("page-title");
   if (pageTitleEl) {
     pageTitleEl.textContent = t(`nav.${state.route}`) || state.route;
   }
+
+  const actionsEl = document.getElementById("topbar-actions");
+  if (actionsEl) {
+    const switcherHtml = renderNodeSwitcher(state, { t });
+    const authBadgeHtml = renderAuthStatusBadge(state, { t });
+    actionsEl.innerHTML = `${switcherHtml}${authBadgeHtml}`;
+  }
+}
+
+/**
+ * Generates HTML for system banners (preview mode, update available, and active alert banner).
+ */
+export function renderSystemBanners(appState = state, { t: translate = t } = {}) {
+  const parts = [];
+
+  // 1. Preview mode banner
+  if (appState?.system?.preview_mode) {
+    const msg = appState.system.preview_message || translate("system.previewModeDefault") || "Demonstração ativa. Modificações estão desabilitadas.";
+    parts.push(`<div class="banner banner-warning">
+  <span>${escapeHtml(msg)}</span>
+</div>`);
+  }
+
+  // 2. Update available banner
+  if (appState?.system?.update_available && appState?.system?.latest_version && !appState?.updateBannerDismissed) {
+    const updateText = translate("system.updateAvailable", { version: appState.system.latest_version });
+    const finalText = updateText !== "system.updateAvailable"
+      ? updateText
+      : `Nova versão disponível: v${appState.system.latest_version}`;
+    parts.push(`<div class="banner banner-info">
+  <span>${escapeHtml(finalText)}</span>
+  <button type="button" class="banner-close" data-action="dismiss-update-banner" aria-label="Close">&times;</button>
+</div>`);
+  }
+
+  // 3. Action / Error notification banner
+  if (appState?.banner && appState.banner.text) {
+    const kind = appState.banner.kind || "info";
+    parts.push(`<div class="banner banner-${escapeHtml(kind)}">
+  <span>${escapeHtml(appState.banner.text)}</span>
+  <button type="button" class="banner-close" data-action="close-banner" aria-label="Close">&times;</button>
+</div>`);
+  }
+
+  return parts.join("\n");
 }
 
 /**
@@ -192,16 +303,23 @@ export function updateBanner() {
   const bannerContainer = document.getElementById("banner-container");
   if (!bannerContainer) return;
 
-  if (!state.banner || !state.banner.text) {
-    bannerContainer.innerHTML = "";
-    return;
-  }
+  bannerContainer.innerHTML = renderSystemBanners(state, { t });
+}
 
-  const kind = state.banner.kind || "info";
-  bannerContainer.innerHTML = `<div class="banner banner-${escapeHtml(kind)}">
-  <span>${escapeHtml(state.banner.text)}</span>
-  <button type="button" class="banner-close" data-action="close-banner" aria-label="Close">&times;</button>
-</div>`;
+/**
+ * Ensures the auth modal container exists in document.body and updates its content.
+ */
+function updateAuthModal() {
+  if (typeof document === "undefined") return;
+  if (!authModalEl) {
+    authModalEl = document.getElementById("auth-modal-root");
+    if (!authModalEl) {
+      authModalEl = document.createElement("div");
+      authModalEl.id = "auth-modal-root";
+      document.body.appendChild(authModalEl);
+    }
+  }
+  authModalEl.innerHTML = renderAuthModal(state, { t });
 }
 
 /**
@@ -223,10 +341,11 @@ export function render() {
     }
   });
 
-  // 2. Topbar, Footer & Banner
+  // 2. Topbar, Footer, Banner & Auth Modal
   updateTopbar();
   updateSidebarFooter();
   updateBanner();
+  updateAuthModal();
 
   // 3. View content mount
   const mainEl = document.getElementById("main-content");
@@ -349,6 +468,7 @@ function setupPolling() {
       if (sys) {
         state.system = sys;
         updateSidebarFooter();
+        updateBanner();
       }
     } catch {
       const indicatorEl = document.getElementById("server-status-indicator");
@@ -387,16 +507,20 @@ function ensureChartTooltip() {
 }
 
 /**
- * Extracts Servers form values from FormData, preserving LibreSpeed settings when provider is Cloudflare
+ * Extracts Servers form values from FormData, preserving LibreSpeed and Ookla settings when another provider is selected
  * (since disabled controls are omitted from FormData).
  */
 export function extractServersFormValues(formData, currentConfig = {}) {
-  return {
+  const out = {
     provider: formData.get("provider") || "cloudflare",
     libreServerId: formData.get("libreServerId") ?? currentConfig?.libreServerId ?? "auto",
     libreUrl: formData.get("libreUrl") ?? currentConfig?.libreUrl ?? "",
     interface: formData.get("interface") || "auto",
   };
+  if (formData.has("ooklaServerId") || currentConfig?.ooklaServerId !== undefined) {
+    out.ooklaServerId = formData.get("ooklaServerId") ?? currentConfig?.ooklaServerId ?? "auto";
+  }
+  return out;
 }
 
 /**
@@ -494,6 +618,31 @@ export async function onSettingsSubmit(formData, appState, client, { t = (k) => 
 }
 
 /**
+ * Switches active node context (local or remote node ID) and reloads view data.
+ */
+async function switchActiveNode(nodeId) {
+  const normalized = nodeId != null && nodeId !== "" && nodeId !== "local" ? Number(nodeId) : null;
+  apiClient.setActiveNode(normalized);
+  if (!state.nodes) {
+    state.nodes = { activeNodeId: normalized, items: [], statuses: {}, editing: null };
+  } else {
+    state.nodes.activeNodeId = normalized;
+  }
+
+  const [sys, status, cfg] = await Promise.all([
+    apiClient.getSystemStatus().catch(() => null),
+    apiClient.getStatus().catch(() => null),
+    apiClient.getConfig().catch(() => null),
+  ]);
+  if (sys) state.system = sys;
+  if (status) state.status = status;
+  if (cfg) state.config = cfg;
+
+  await loadViewData(state.route);
+  render();
+}
+
+/**
  * Sets up global event delegation for clicks, submits, changes and hover tooltips.
  */
 function setupEventDelegation() {
@@ -532,6 +681,202 @@ function setupEventDelegation() {
       e.preventDefault();
       state.banner = null;
       updateBanner();
+      return;
+    }
+
+    // Action: dismiss-update-banner
+    if (e.target.closest('[data-action="dismiss-update-banner"]')) {
+      e.preventDefault();
+      state.updateBannerDismissed = true;
+      updateBanner();
+      return;
+    }
+
+    // Action: open-auth-modal
+    if (e.target.closest('[data-action="open-auth-modal"]')) {
+      e.preventDefault();
+      if (!state.auth) state.auth = { mode: "public", authenticated: false, modalOpen: true, error: null };
+      state.auth.modalOpen = true;
+      state.auth.error = null;
+      updateAuthModal();
+      return;
+    }
+
+    // Action: close-auth-modal
+    if (e.target.closest('[data-action="close-auth-modal"]')) {
+      e.preventDefault();
+      if (state.auth) {
+        state.auth.modalOpen = false;
+        state.auth.error = null;
+      }
+      updateAuthModal();
+      return;
+    }
+
+    // Action: auth-logout
+    if (e.target.closest('[data-action="auth-logout"]')) {
+      e.preventDefault();
+      try {
+        await apiClient.logout();
+        const authSt = await apiClient.getAuthStatus().catch(() => ({ mode: "none", authenticated: false }));
+        state.auth = { ...authSt, modalOpen: false, error: null };
+        render();
+      } catch (err) {
+        state.banner = { kind: "error", text: err.message || "Logout failed" };
+        render();
+      }
+      return;
+    }
+
+    // Action: ookla-consent-install
+    if (e.target.closest('[data-action="ookla-consent-install"]')) {
+      e.preventDefault();
+      state.servers.ooklaInstalling = true;
+      state.servers.ooklaError = null;
+      render();
+      try {
+        await apiClient.consentOokla();
+        await apiClient.installOokla();
+        state.servers.ooklaInstalling = false;
+        await loadViewData("servers");
+        state.banner = { kind: "info", text: t("servers.ooklaInstallSuccess") || "Ookla Speedtest CLI instalado com sucesso!" };
+      } catch (err) {
+        state.servers.ooklaInstalling = false;
+        state.servers.ooklaError = err.message || "Falha ao instalar Ookla CLI";
+      }
+      render();
+      return;
+    }
+
+    // Action: test-integration
+    const testIntBtn = e.target.closest('[data-action="test-integration"]');
+    if (testIntBtn) {
+      e.preventDefault();
+      const id = testIntBtn.getAttribute("data-id");
+      try {
+        await apiClient.testIntegration(id);
+        state.banner = { kind: "info", text: t("integrations.testSuccess") || "Notificação de teste enviada com sucesso!" };
+      } catch (err) {
+        state.banner = { kind: "error", text: err.message || "Falha ao testar integração" };
+      }
+      updateBanner();
+      return;
+    }
+
+    // Action: edit-integration
+    const editIntBtn = e.target.closest('[data-action="edit-integration"]');
+    if (editIntBtn) {
+      e.preventDefault();
+      const id = editIntBtn.getAttribute("data-id");
+      const found = (state.integrations?.items || []).find((i) => String(i.id) === String(id));
+      if (found) {
+        state.integrations.editing = found;
+        state.integrations.selectedChannel = found.channel_type;
+        render();
+      }
+      return;
+    }
+
+    // Action: cancel-edit-integration
+    if (e.target.closest('[data-action="cancel-edit-integration"]')) {
+      e.preventDefault();
+      if (state.integrations) {
+        state.integrations.editing = null;
+      }
+      render();
+      return;
+    }
+
+    // Action: delete-integration
+    const delIntBtn = e.target.closest('[data-action="delete-integration"]');
+    if (delIntBtn) {
+      e.preventDefault();
+      const id = delIntBtn.getAttribute("data-id");
+      const confirmMsg = t("integrations.deleteConfirm") || "Tem certeza que deseja excluir esta integração?";
+      if (confirm(confirmMsg)) {
+        try {
+          await apiClient.deleteIntegration(id);
+          await loadViewData("integrations");
+          render();
+        } catch (err) {
+          state.banner = { kind: "error", text: err.message || "Failed to delete integration" };
+          updateBanner();
+        }
+      }
+      return;
+    }
+
+    // Action: switch-node
+    const switchNodeBtn = e.target.closest('[data-action="switch-node"]');
+    if (switchNodeBtn) {
+      e.preventDefault();
+      const id = switchNodeBtn.getAttribute("data-id");
+      await switchActiveNode(id);
+      return;
+    }
+
+    // Action: edit-node
+    const editNodeBtn = e.target.closest('[data-action="edit-node"]');
+    if (editNodeBtn) {
+      e.preventDefault();
+      const id = editNodeBtn.getAttribute("data-id");
+      const found = (state.nodes?.items || []).find((n) => String(n.id) === String(id));
+      if (found) {
+        state.nodes.editing = found;
+        render();
+      }
+      return;
+    }
+
+    // Action: cancel-edit-node
+    if (e.target.closest('[data-action="cancel-edit-node"]')) {
+      e.preventDefault();
+      if (state.nodes) {
+        state.nodes.editing = null;
+      }
+      render();
+      return;
+    }
+
+    // Action: delete-node
+    const delNodeBtn = e.target.closest('[data-action="delete-node"]');
+    if (delNodeBtn) {
+      e.preventDefault();
+      const id = delNodeBtn.getAttribute("data-id");
+      const confirmMsg = t("nodes.deleteConfirm") || "Tem certeza que deseja remover este nó?";
+      if (confirm(confirmMsg)) {
+        try {
+          await apiClient.deleteNode(id);
+          if (String(state.nodes?.activeNodeId) === String(id)) {
+            await switchActiveNode("local");
+          } else {
+            await loadViewData("nodes");
+            render();
+          }
+        } catch (err) {
+          state.banner = { kind: "error", text: err.message || "Failed to delete node" };
+          updateBanner();
+        }
+      }
+      return;
+    }
+
+    // Action: reset-data
+    if (e.target.closest('[data-action="reset-data"]')) {
+      e.preventDefault();
+      const confirmMsg = t("settings.resetConfirm") || "Tem certeza que deseja apagar todo o histórico e restaurar as configurações padrão?";
+      if (confirm(confirmMsg)) {
+        try {
+          await apiClient.resetData();
+          state.config = await apiClient.getConfig().catch(() => null);
+          await loadViewData("settings");
+          state.banner = { kind: "info", text: t("settings.resetSuccess") || "Banco de dados redefinido com sucesso!" };
+          render();
+        } catch (err) {
+          state.banner = { kind: "error", text: err.message || "Falha ao redefinir dados" };
+          updateBanner();
+        }
+      }
       return;
     }
 
@@ -620,6 +965,139 @@ function setupEventDelegation() {
     const form = e.target;
     if (!form || !form.dataset) return;
 
+    // Auth Login form submit
+    if (form.dataset.form === "auth-login") {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const pwd = fd.get("password") || "";
+      try {
+        await apiClient.login(pwd);
+        const authSt = await apiClient.getAuthStatus().catch(() => ({ mode: "protected", authenticated: true }));
+        state.auth = { ...authSt, modalOpen: false, error: null };
+        const [sys, status, cfg] = await Promise.all([
+          apiClient.getSystemStatus().catch(() => null),
+          apiClient.getStatus().catch(() => null),
+          apiClient.getConfig().catch(() => null),
+        ]);
+        if (sys) state.system = sys;
+        if (status) state.status = status;
+        if (cfg) state.config = cfg;
+        await loadViewData(state.route);
+        render();
+      } catch (err) {
+        if (!state.auth) state.auth = { mode: "protected", authenticated: false, modalOpen: true, error: null };
+        state.auth.error = err.message || (t("auth.invalidPassword") || "Senha incorreta");
+        updateAuthModal();
+      }
+      return;
+    }
+
+    // Auth Password configuration form submit in Settings
+    if (form.dataset.form === "auth-password") {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const mode = fd.get("mode") || "none";
+      const password = fd.get("password") || "";
+      const payload = { mode };
+      if (password) {
+        payload.password = password;
+      }
+      try {
+        await apiClient.setPassword(payload);
+        const [authSt, cfg] = await Promise.all([
+          apiClient.getAuthStatus().catch(() => null),
+          apiClient.getConfig().catch(() => null),
+        ]);
+        if (authSt) state.auth = { ...authSt, modalOpen: false, error: null };
+        if (cfg) state.config = cfg;
+        state.banner = { kind: "info", text: t("settings.passwordSaved") || "Configuração de segurança salva com sucesso!" };
+        render();
+      } catch (err) {
+        state.banner = { kind: "error", text: err.message || "Falha ao atualizar senha" };
+        updateBanner();
+      }
+      return;
+    }
+
+    // Data Import form submit in Settings
+    if (form.dataset.form === "data-import") {
+      e.preventDefault();
+      const fileInput = form.querySelector('input[type="file"]');
+      const file = fileInput?.files?.[0];
+      if (!file) {
+        state.banner = { kind: "warning", text: t("settings.importSelectFile") || "Selecione um arquivo JSON ou CSV para importar." };
+        updateBanner();
+        return;
+      }
+      try {
+        const text = await file.text();
+        const ct = file.name.endsWith(".csv") ? "text/csv" : "application/json";
+        const res = await apiClient.importData(text, ct);
+        await loadViewData("settings");
+        const count = res?.imported ?? 0;
+        const msg = t("settings.importSuccess", { count });
+        state.banner = {
+          kind: "info",
+          text: msg !== "settings.importSuccess" ? msg : `${count} registros importados com sucesso!`,
+        };
+        render();
+      } catch (err) {
+        state.banner = { kind: "error", text: err.message || "Falha na importação" };
+        updateBanner();
+      }
+      return;
+    }
+
+    // Integration form submit
+    if (form.dataset.form === "integration") {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const payload = extractIntegrationPayload(fd);
+      const editId = form.dataset.editId;
+      try {
+        if (editId) {
+          await apiClient.updateIntegration(editId, payload);
+        } else {
+          await apiClient.createIntegration(payload);
+        }
+        if (state.integrations) {
+          state.integrations.editing = null;
+        }
+        await loadViewData("integrations");
+        state.banner = { kind: "info", text: t("settings.saveSuccess") || "Salvo com sucesso!" };
+        render();
+      } catch (err) {
+        state.banner = { kind: "error", text: err.message || "Falha ao salvar integração" };
+        updateBanner();
+      }
+      return;
+    }
+
+    // Node form submit
+    if (form.dataset.form === "node") {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const payload = extractNodePayload(fd);
+      const editId = form.dataset.editId;
+      try {
+        if (editId) {
+          await apiClient.updateNode(editId, payload);
+        } else {
+          await apiClient.createNode(payload);
+        }
+        if (state.nodes) {
+          state.nodes.editing = null;
+        }
+        await loadViewData("nodes");
+        state.banner = { kind: "info", text: t("settings.saveSuccess") || "Salvo com sucesso!" };
+        render();
+      } catch (err) {
+        state.banner = { kind: "error", text: err.message || "Falha ao salvar nó" };
+        updateBanner();
+      }
+      return;
+    }
+
     // Servers form submit
     if (form.dataset.form === "servers") {
       e.preventDefault();
@@ -653,6 +1131,25 @@ function setupEventDelegation() {
     const target = e.target;
     if (!target) return;
 
+    // Topbar active node selector
+    if (target.name === "activeNodeSelector") {
+      await switchActiveNode(target.value);
+      return;
+    }
+
+    // Integration channel_type selector
+    if (target.name === "channel_type") {
+      const ch = target.value || "discord";
+      if (state.integrations) {
+        state.integrations.selectedChannel = ch;
+      }
+      const container = document.getElementById("integration-config-fields");
+      if (container) {
+        container.innerHTML = renderChannelConfigFields(ch, state.integrations?.editing?.config || {}, { t });
+      }
+      return;
+    }
+
     // Expected mode toggle in Settings
     if (target.name === "expectedMode") {
       const isAuto = target.value === "auto";
@@ -671,11 +1168,21 @@ function setupEventDelegation() {
     // Provider radio switch in Servers
     if (target.name === "provider") {
       const isLibre = target.value === "librespeed";
-      const card = document.getElementById("librespeed-card");
-      if (card) {
-        card.style.opacity = isLibre ? "1" : "0.6";
-        card.querySelectorAll("input, select").forEach((el) => {
+      const isOokla = target.value === "ookla";
+
+      const libreCard = document.getElementById("librespeed-card");
+      if (libreCard) {
+        libreCard.style.opacity = isLibre ? "1" : "0.6";
+        libreCard.querySelectorAll("input, select").forEach((el) => {
           el.disabled = !isLibre;
+        });
+      }
+
+      const ooklaCard = document.getElementById("ookla-card");
+      if (ooklaCard) {
+        ooklaCard.style.opacity = isOokla ? "1" : "0.6";
+        ooklaCard.querySelectorAll("input, select").forEach((el) => {
+          el.disabled = !isOokla;
         });
       }
       return;
@@ -759,16 +1266,26 @@ async function main() {
   // Setup i18n
   await setupI18n();
 
+  // Check authentication status first
+  const authSt = await apiClient.getAuthStatus().catch(() => ({ mode: "none", authenticated: false }));
+  state.auth = { ...authSt, modalOpen: false, error: null };
+
   // Load initial global data
-  const [sys, status, cfg] = await Promise.all([
+  const [sys, status, cfg, nodesList] = await Promise.all([
     apiClient.getSystemStatus().catch(() => null),
     apiClient.getStatus().catch(() => null),
     apiClient.getConfig().catch(() => null),
+    apiClient.listNodes().catch(() => []),
   ]);
 
   if (sys) state.system = sys;
   if (status) state.status = status;
   if (cfg) state.config = cfg;
+  if (!state.nodes) {
+    state.nodes = { activeNodeId: null, items: nodesList || [], statuses: {}, editing: null };
+  } else {
+    state.nodes.items = nodesList || [];
+  }
 
   // Load route-specific initial data
   await loadViewData(state.route);

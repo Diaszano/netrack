@@ -21,13 +21,15 @@ export const CONFIG_KEY_MAP = {
   expectedUpload: "expected_upload",
   libreServerId: "libre_server_id",
   libreUrl: "libre_url",
+  ooklaServerId: "ookla_server_id",
+  ooklaLicenseAgreed: "ookla_license_agreed",
   interface: "interface",
   paused: "paused",
 };
 
 /**
  * Serializes a configuration value into the string format required by PATCH /api/config/{key}.
- * Converts null/empty string on libreServerId/interface to "auto",
+ * Converts null/empty string on libreServerId/ooklaServerId/interface to "auto",
  * converts null/empty string on libreUrl to "none",
  * converts booleans to "true"/"false",
  * and numbers/strings to String(val).
@@ -36,6 +38,8 @@ export function serializeConfigValue(key, val) {
   if (
     key === "libreServerId" ||
     key === "libre_server_id" ||
+    key === "ooklaServerId" ||
+    key === "ookla_server_id" ||
     key === "interface"
   ) {
     if (val === null || val === undefined || val === "") {
@@ -63,9 +67,24 @@ export function serializeConfigValue(key, val) {
 /**
  * Creates an API client instance using the provided fetch implementation.
  */
-export function createApiClient(fetchImpl = globalThis.fetch) {
+export function createApiClient(fetchImpl = globalThis.fetch, { onUnauthorized } = {}) {
+  let activeNodeId = null;
+
+  function resolveApiUrl(url, { localOnly = false } = {}) {
+    if (localOnly || activeNodeId == null) {
+      return url;
+    }
+    if (url.startsWith("/api/")) {
+      const subpath = url.slice(5);
+      return `/api/nodes/${encodeURIComponent(activeNodeId)}/proxy/${subpath}`;
+    }
+    return url;
+  }
+
   async function request(url, options = {}) {
-    const res = await fetchImpl(url, options);
+    const { localOnly = false, ...fetchOptions } = options;
+    const targetUrl = resolveApiUrl(url, { localOnly });
+    const res = await fetchImpl(targetUrl, fetchOptions);
 
     if (!res.ok) {
       let message = res.statusText || `HTTP ${res.status}`;
@@ -76,6 +95,9 @@ export function createApiClient(fetchImpl = globalThis.fetch) {
         }
       } catch {
         // Fall back to statusText if body is not JSON or already read
+      }
+      if (res.status === 401 && typeof onUnauthorized === "function" && !url.startsWith("/api/auth/login")) {
+        onUnauthorized();
       }
       throw new ApiClientError(res.status, message);
     }
@@ -111,6 +133,14 @@ export function createApiClient(fetchImpl = globalThis.fetch) {
   }
 
   return {
+    setActiveNode(nodeId) {
+      activeNodeId = nodeId != null && nodeId !== "" && nodeId !== "local" ? Number(nodeId) : null;
+    },
+
+    getActiveNode() {
+      return activeNodeId;
+    },
+
     async getStatus() {
       return request("/api/speedtests/status");
     },
@@ -174,12 +204,147 @@ export function createApiClient(fetchImpl = globalThis.fetch) {
       return request("/api/system/servers/librespeed");
     },
 
+    async getOoklaStatus() {
+      return request("/api/system/ookla/status");
+    },
+
+    async consentOokla() {
+      return request("/api/system/ookla/consent", { method: "POST" });
+    },
+
+    async installOokla() {
+      return request("/api/system/ookla/install", { method: "POST" });
+    },
+
+    async getOoklaServers() {
+      return request("/api/system/servers/ookla");
+    },
+
+    async getAuthStatus() {
+      return request("/api/auth/status", { localOnly: true });
+    },
+
+    async login(password) {
+      return request("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+        localOnly: true,
+      });
+    },
+
+    async logout() {
+      return request("/api/auth/logout", {
+        method: "POST",
+        localOnly: true,
+      });
+    },
+
+    async setPassword(payload) {
+      return request("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
+
+    async listIntegrations() {
+      return request("/api/integrations");
+    },
+
+    async createIntegration(payload) {
+      return request("/api/integrations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
+
+    async updateIntegration(id, payload) {
+      return request(`/api/integrations/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
+
+    async deleteIntegration(id) {
+      return request(`/api/integrations/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    },
+
+    async testIntegration(id) {
+      return request(`/api/integrations/${encodeURIComponent(id)}/test`, {
+        method: "POST",
+      });
+    },
+
+    async listNodes() {
+      return request("/api/nodes", { localOnly: true });
+    },
+
+    async createNode(payload) {
+      return request("/api/nodes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        localOnly: true,
+      });
+    },
+
+    async updateNode(id, payload) {
+      return request(`/api/nodes/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        localOnly: true,
+      });
+    },
+
+    async deleteNode(id) {
+      return request(`/api/nodes/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        localOnly: true,
+      });
+    },
+
+    async getNodeStatus(id) {
+      return request(`/api/nodes/${encodeURIComponent(id)}/status`, {
+        localOnly: true,
+      });
+    },
+
+    async getDataStats() {
+      return request("/api/data/stats");
+    },
+
+    async importData(content, contentType = "application/json") {
+      return request("/api/data/import", {
+        method: "POST",
+        headers: { "Content-Type": contentType },
+        body: typeof content === "string" ? content : JSON.stringify(content),
+      });
+    },
+
+    async resetData() {
+      return request("/api/data/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+    },
+
+    getExportUrl(format = "json") {
+      return resolveApiUrl(`/api/data/export?format=${encodeURIComponent(format)}`);
+    },
+
     async getLocales() {
-      return request("/locales/index.json");
+      return request("/locales/index.json", { localOnly: true });
     },
 
     async getLocaleDict(code) {
-      return request(`/locales/${encodeURIComponent(code)}.json`);
+      return request(`/locales/${encodeURIComponent(code)}.json`, { localOnly: true });
     },
   };
 }

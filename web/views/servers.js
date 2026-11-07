@@ -1,5 +1,5 @@
 // web/views/servers.js
-// Speedtest provider, LibreSpeed server & network interface settings view
+// Speedtest provider (Cloudflare, LibreSpeed, Ookla), Ookla consent/install & network interface settings view
 
 import { escapeHtml } from "../i18n.js";
 
@@ -15,11 +15,21 @@ export function renderServers(state, { t = (k) => k } = {}) {
   const currentProvider = state?.config?.provider || "cloudflare";
   const currentServerId = state?.config?.libreServerId != null ? String(state.config.libreServerId) : "auto";
   const currentUrl = state?.config?.libreUrl || "";
+  const currentOoklaServerId = state?.config?.ooklaServerId != null ? String(state.config.ooklaServerId) : "auto";
   const currentIface = state?.config?.interface || "auto";
 
   const interfaces = Array.isArray(state?.servers?.interfaces) ? state.servers.interfaces : [];
   const libreServers = Array.isArray(state?.servers?.libreServers) ? state.servers.libreServers : [];
   const libreError = state?.servers?.libreError || null;
+
+  const ooklaStatus = state?.servers?.ooklaStatus || {
+    installed: false,
+    consented: Boolean(state?.config?.ooklaLicenseAgreed),
+    arch: "unknown",
+  };
+  const ooklaServers = Array.isArray(state?.servers?.ooklaServers) ? state.servers.ooklaServers : [];
+  const ooklaError = state?.servers?.ooklaError || null;
+  const ooklaInstalling = Boolean(state?.servers?.ooklaInstalling);
 
   const title = t("servers.title") || "Servidores";
 
@@ -31,6 +41,7 @@ export function renderServers(state, { t = (k) => k } = {}) {
   // 1. Provider selection card
   const isCf = currentProvider === "cloudflare";
   const isLibre = currentProvider === "librespeed";
+  const isOokla = currentProvider === "ookla";
 
   const providerCardHtml = `<div class="card">
   <div class="card-header">
@@ -48,6 +59,12 @@ export function renderServers(state, { t = (k) => k } = {}) {
         <input type="radio" name="provider" value="librespeed" ${isLibre ? "checked" : ""}>
         <div>
           <div style="font-weight: 600; color: var(--text);">${escapeHtml(t("servers.providerLibrespeed") || "LibreSpeed")}</div>
+        </div>
+      </label>
+      <label class="form-check provider-card-option" style="padding: 14px; border: 1px solid ${isOokla ? "var(--accent-dl)" : "var(--border)"}; border-radius: 6px; cursor: pointer; background-color: ${isOokla ? "var(--nav-active)" : "transparent"}; display: flex; align-items: center; gap: 10px;">
+        <input type="radio" name="provider" value="ookla" ${isOokla ? "checked" : ""}>
+        <div>
+          <div style="font-weight: 600; color: var(--text);">${escapeHtml(t("servers.providerOokla") || "Ookla Speedtest")}</div>
         </div>
       </label>
     </div>
@@ -88,7 +105,65 @@ export function renderServers(state, { t = (k) => k } = {}) {
   </div>
 </div>`;
 
-  // 3. Network interface selector card
+  // 3. Ookla CLI status, EULA consent & server selection card
+  const ooklaDisabledAttr = !isOokla ? " disabled" : "";
+  const ooklaCardStyle = !isOokla ? "opacity: 0.6;" : "";
+
+  const ooklaErrorBanner = ooklaError
+    ? `<div class="banner banner-warning" style="margin-bottom: 16px;">
+        <span>${escapeHtml(ooklaError)}</span>
+      </div>`
+    : "";
+
+  const ooklaBadgeHtml = ooklaStatus.installed
+    ? `<span class="badge badge-ok">${escapeHtml(t("servers.ooklaInstalled") || "CLI instalado")}</span>`
+    : `<span class="badge badge-manual">${escapeHtml(t("servers.ooklaNotInstalled") || "Não instalado")}</span>`;
+
+  let ooklaBodyHtml = "";
+  if (!ooklaStatus.consented || !ooklaStatus.installed) {
+    const installBtnText = ooklaInstalling
+      ? (t("servers.ooklaInstalling") || "Instalando...")
+      : (t("servers.ooklaConsentAndInstall") || "Aceitar termos e instalar Ookla CLI");
+
+    ooklaBodyHtml = `<div class="ookla-consent-box" style="padding: 12px; border: 1px solid var(--border); border-radius: 6px; background-color: rgba(255,255,255,0.02);">
+      <p style="font-size: 12px; color: var(--text); margin-bottom: 8px;">
+        ${escapeHtml(t("servers.ooklaConsentText") || "Para usar o provedor Ookla Speedtest CLI, você deve aceitar o Contrato de Licença de Usuário Final (EULA), a Política de Privacidade e os Termos de Uso da Ookla (speedtest.net).")}
+      </p>
+      <div style="display: flex; gap: 12px; font-size: 12px; margin-bottom: 12px;">
+        <a href="https://www.speedtest.net/about/eula" target="_blank" rel="noopener noreferrer" style="color: var(--accent-dl); text-decoration: underline;">Ookla EULA</a>
+        <a href="https://www.speedtest.net/about/privacy" target="_blank" rel="noopener noreferrer" style="color: var(--accent-dl); text-decoration: underline;">Privacy Policy</a>
+        <a href="https://www.speedtest.net/about/terms" target="_blank" rel="noopener noreferrer" style="color: var(--accent-dl); text-decoration: underline;">Terms of Use</a>
+      </div>
+      <button type="button" class="btn btn-primary" data-action="ookla-consent-install"${ooklaInstalling ? " disabled" : ""}>
+        ${escapeHtml(installBtnText)}
+      </button>
+    </div>`;
+  } else {
+    let ooklaOptionsHtml = `<option value="auto"${currentOoklaServerId === "auto" || !currentOoklaServerId ? " selected" : ""}>${escapeHtml(t("servers.ooklaAuto") || "Automático (melhor servidor)")}</option>`;
+    for (const s of ooklaServers) {
+      const isSel = String(s.id) === currentOoklaServerId;
+      const loc = s.location ? ` (${s.location})` : "";
+      ooklaOptionsHtml += `\n<option value="${escapeHtml(s.id)}"${isSel ? " selected" : ""}>${escapeHtml(s.id)} — ${escapeHtml(s.name)}${escapeHtml(loc)}</option>`;
+    }
+
+    ooklaBodyHtml = `<div class="form-group">
+      <label class="form-label" for="ookla-server-id">${escapeHtml(t("servers.ooklaServer") || "Servidor Ookla")}</label>
+      <select id="ookla-server-id" name="ooklaServerId" class="form-control"${ooklaDisabledAttr}>
+        ${ooklaOptionsHtml}
+      </select>
+    </div>`;
+  }
+
+  const ooklaCardHtml = `<div class="card" id="ookla-card" style="${ooklaCardStyle}">
+  <div class="card-header">
+    <h2 class="card-title">${escapeHtml(t("servers.providerOokla") || "Ookla Speedtest")}</h2>
+    ${ooklaBadgeHtml}
+  </div>
+  ${ooklaErrorBanner}
+  ${ooklaBodyHtml}
+</div>`;
+
+  // 4. Network interface selector card
   const ifaceInList = currentIface && currentIface !== "auto" && interfaces.some((i) => i.name === currentIface);
   let ifaceOptionsHtml = `<option value="auto"${currentIface === "auto" || !currentIface ? " selected" : ""}>${escapeHtml(t("servers.interfaceAuto") || "Automático (padrão do sistema)")}</option>`;
   for (const iface of interfaces) {
@@ -122,6 +197,7 @@ export function renderServers(state, { t = (k) => k } = {}) {
 <form data-form="servers">
   ${providerCardHtml}
   ${libreCardHtml}
+  ${ooklaCardHtml}
   ${interfaceCardHtml}
   ${submitBtnHtml}
 </form>`;

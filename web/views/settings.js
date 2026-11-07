@@ -1,8 +1,9 @@
 // web/views/settings.js
-// Schedule, expected performance plan, language, and config diff persistence
+// Schedule, expected performance plan, language, password protection, Prometheus, and data management view
 
 import { escapeHtml } from "../i18n.js";
 import { CONFIG_KEY_MAP } from "../api.js";
+import { formatBytes } from "../format.js";
 
 const SNAKE_TO_CAMEL = {};
 for (const [camel, snake] of Object.entries(CONFIG_KEY_MAP)) {
@@ -19,6 +20,11 @@ function isValueChanged(prevVal, nextVal) {
 
   // Treat null, undefined and empty string as equivalent for unconfigured fields
   if ((prevVal == null || prevVal === "") && (nextVal == null || nextVal === "")) {
+    return false;
+  }
+
+  // Treat null/undefined and "auto" as equivalent for serverId/interface
+  if ((prevVal == null || prevVal === "auto") && (nextVal == null || nextVal === "auto" || nextVal === "")) {
     return false;
   }
 
@@ -74,7 +80,7 @@ export async function saveConfigDiff(prevConfig, formValues, apiClient) {
 }
 
 /**
- * Renders the Settings view with Schedule, Expected Plan, and Language cards.
+ * Renders the Settings view with Schedule, Expected Plan, Language, Password Protection, Prometheus, and Data Management cards.
  *
  * @param {object} state - Application state
  * @param {object} [opts]
@@ -84,6 +90,7 @@ export async function saveConfigDiff(prevConfig, formValues, apiClient) {
  */
 export function renderSettings(state, { t = (k) => k, locales = [] } = {}) {
   const config = state?.config || {};
+  const locale = state?.locale || "pt-BR";
   const currentLocale = state?.localePreference || state?.locale || "auto";
 
   const title = t("settings.title") || "Ajustes";
@@ -180,9 +187,93 @@ export function renderSettings(state, { t = (k) => k, locales = [] } = {}) {
   </div>
 </div>`;
 
-  // Submit button
-  const submitBtnHtml = `<div style="display: flex; justify-content: flex-end; margin-top: 16px;">
+  // Submit button for main config form
+  const submitBtnHtml = `<div style="display: flex; justify-content: flex-end; margin-top: 16px; margin-bottom: 24px;">
   <button type="submit" class="btn btn-primary">${escapeHtml(t("common.save") || "Salvar alterações")}</button>
+</div>`;
+
+  // 4. Password Protection & Prometheus Metrics Card
+  const currentPasswordMode = config.passwordMode || state?.auth?.mode || "none";
+  const securityCardHtml = `<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">${escapeHtml(t("settings.securityTitle") || "Segurança e Acesso")}</h2>
+  </div>
+  <form data-form="auth-password">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+      <div class="form-group">
+        <label class="form-label" for="setting-password-mode">${escapeHtml(t("settings.passwordMode") || "Modo de proteção")}</label>
+        <select id="setting-password-mode" name="mode" class="form-control">
+          <option value="none"${currentPasswordMode === "none" ? " selected" : ""}>${escapeHtml(t("settings.passwordModeNone") || "Desativado (sem senha)")}</option>
+          <option value="public"${currentPasswordMode === "public" ? " selected" : ""}>${escapeHtml(t("settings.passwordModePublic") || "Público (leitura livre, ajustes protegidos)")}</option>
+          <option value="protected"${currentPasswordMode === "protected" ? " selected" : ""}>${escapeHtml(t("settings.passwordModeProtected") || "Protegido (exige senha para tudo)")}</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="setting-new-password">${escapeHtml(t("settings.newPassword") || "Nova senha")}</label>
+        <input id="setting-new-password" type="password" name="password" class="form-control" placeholder="••••••••">
+        <span class="form-help">${escapeHtml(t("settings.newPasswordHelp") || "Deixe em branco para manter a senha atual ao trocar de modo")}</span>
+      </div>
+    </div>
+    <div style="display: flex; justify-content: flex-end; margin-top: 12px;">
+      <button type="submit" class="btn btn-secondary">${escapeHtml(t("settings.savePassword") || "Atualizar segurança")}</button>
+    </div>
+  </form>
+  <div style="border-top: 1px solid var(--border); margin-top: 16px; padding-top: 14px;">
+    <div class="form-label">${escapeHtml(t("settings.prometheusTitle") || "Métricas Prometheus")}</div>
+    <p class="form-help" style="margin-top: 4px;">
+      ${escapeHtml(t("settings.prometheusHelp") || "Endpoint compatível com Prometheus (suporta HTTP Basic Auth quando protegido por senha):")}
+      <code style="font-family: var(--font-mono); color: var(--accent-dl); margin-left: 6px;">/api/prometheus/metrics</code>
+    </p>
+  </div>
+</div>`;
+
+  // 5. Data Management Card (Export JSON/CSV, Import Netrack/MySpeed/CSV, Stats & Reset)
+  const rowCount = state?.dataStats?.rowCount != null ? String(state.dataStats.rowCount) : "—";
+  const dbSize = state?.dataStats?.dbSizeBytes != null ? formatBytes(state.dataStats.dbSizeBytes, locale) : "—";
+
+  const dataCardHtml = `<div class="card">
+  <div class="card-header">
+    <h2 class="card-title">${escapeHtml(t("settings.dataTitle") || "Gerenciamento de Dados")}</h2>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px;">
+    <div class="stat-kpi-card">
+      <div class="stat-kpi-label">${escapeHtml(t("settings.dataTotalRecords") || "Total de registros")}</div>
+      <div class="stat-kpi-value">${escapeHtml(rowCount)}</div>
+    </div>
+    <div class="stat-kpi-card">
+      <div class="stat-kpi-label">${escapeHtml(t("settings.dataDbSize") || "Tamanho do banco")}</div>
+      <div class="stat-kpi-value">${escapeHtml(dbSize)}</div>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <div class="form-label">${escapeHtml(t("settings.exportTitle") || "Exportar histórico")}</div>
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px;">
+      <a href="/api/data/export?format=json" download class="btn btn-secondary" data-action="export-json">${escapeHtml(t("settings.exportJson") || "Exportar JSON")}</a>
+      <a href="/api/data/export?format=csv" download class="btn btn-secondary" data-action="export-csv">${escapeHtml(t("settings.exportCsv") || "Exportar CSV")}</a>
+    </div>
+  </div>
+
+  <div style="border-top: 1px solid var(--border); margin-top: 16px; padding-top: 14px;">
+    <form data-form="data-import">
+      <div class="form-group">
+        <label class="form-label" for="data-import-file">${escapeHtml(t("settings.importTitle") || "Importar histórico (Netrack JSON/CSV ou MySpeed JSON)")}</label>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <input id="data-import-file" type="file" name="importFile" accept=".json,.csv,application/json,text/csv" class="form-control" style="max-width: 340px;">
+          <button type="submit" class="btn btn-secondary" data-action="import-data">${escapeHtml(t("settings.importBtn") || "Importar arquivo")}</button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <div style="border-top: 1px solid var(--border); margin-top: 16px; padding-top: 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+    <div>
+      <div class="form-label" style="color: var(--accent-ping);">${escapeHtml(t("settings.resetTitle") || "Redefinir banco de dados")}</div>
+      <div class="form-help">${escapeHtml(t("settings.resetHelp") || "Apaga todos os testes registrados e restaura as configurações padrão.")}</div>
+    </div>
+    <button type="button" class="btn btn-danger" data-action="reset-data">${escapeHtml(t("settings.resetBtn") || "Redefinir tudo")}</button>
+  </div>
 </div>`;
 
   return `${headerHtml}
@@ -191,5 +282,7 @@ export function renderSettings(state, { t = (k) => k, locales = [] } = {}) {
   ${expectedCardHtml}
   ${languageCardHtml}
   ${submitBtnHtml}
-</form>`;
+</form>
+${securityCardHtml}
+${dataCardHtml}`;
 }
