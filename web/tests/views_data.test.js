@@ -372,3 +372,15 @@ test("history_renders_delete_button_and_kind_badges", () => {
   assert.ok(html.includes("940"), "Download metric 940");
   assert.ok(html.includes("15,5") || html.includes("15.5"), "Duration 15.5");
 });
+
+import { renderServerCell, renderStatusBadge } from "../views/test-row.js";
+
+test("renderServerCell escapes and joins name and host", () => {
+  const html = renderServerCell({ provider: "cloudflare", serverName: "<b>SP</b>", serverHost: "h" });
+  assert.ok(html.includes("&lt;b&gt;SP&lt;/b&gt; (h)"));
+});
+
+test("renderStatusBadge has no inline color", () => {
+  assert.ok(!renderStatusBadge({}, { t: tPt }).includes("style="));
+  assert.ok(!renderStatusBadge({ error: "x" }, { t: tPt }).includes("style="));
+});
