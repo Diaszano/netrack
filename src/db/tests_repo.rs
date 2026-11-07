@@ -1,11 +1,11 @@
 use anyhow::anyhow;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use rusqlite::{OptionalExtension, Row, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{Db, local_fields};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TestKind {
     Auto,
@@ -13,14 +13,14 @@ pub enum TestKind {
 }
 
 impl TestKind {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             TestKind::Auto => "auto",
             TestKind::Custom => "custom",
         }
     }
 
-    fn parse(s: &str) -> Option<TestKind> {
+    pub fn parse(s: &str) -> Option<TestKind> {
         match s {
             "auto" => Some(TestKind::Auto),
             "custom" => Some(TestKind::Custom),
@@ -29,7 +29,7 @@ impl TestKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeedtestRow {
     pub id: i64,
@@ -133,6 +133,20 @@ pub async fn insert(db: &Db, t: NewSpeedtest, at: DateTime<Utc>) -> anyhow::Resu
             ],
         )?;
         Ok(conn.last_insert_rowid())
+    })
+    .await
+}
+
+/// All stored speedtests, oldest first (`ORDER BY id ASC`).
+pub async fn all(db: &Db) -> anyhow::Result<Vec<SpeedtestRow>> {
+    db.call(move |conn| {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM speedtests ORDER BY id ASC"
+        ))?;
+        let rows = stmt
+            .query_map([], map_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     })
     .await
 }

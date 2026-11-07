@@ -100,6 +100,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::auth::routes::routes())
         .merge(crate::integrations::routes::routes())
         .merge(crate::prometheus::routes())
+        .merge(crate::data_transfer::routes::routes())
         .fallback(crate::web::serve)
         .method_not_allowed_fallback(method_not_allowed)
         .layer(axum::middleware::from_fn_with_state(

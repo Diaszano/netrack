@@ -71,7 +71,7 @@ pub enum ConfigError {
     Db(#[from] anyhow::Error),
 }
 
-const DEFAULTS: &[(&str, &str)] = &[
+pub const DEFAULTS: &[(&str, &str)] = &[
     ("provider", "cloudflare"),
     ("cron", "0 * * * *"),
     ("schedule_offset", "true"),
