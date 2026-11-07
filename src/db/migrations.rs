@@ -23,6 +23,16 @@ CREATE TABLE sessions (
 );
 CREATE INDEX sessions_expires_at ON sessions(expires_at);
 "#,
+    r#"
+CREATE TABLE integrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  channel_type TEXT NOT NULL,
+  config_json TEXT NOT NULL,
+  events_json TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1
+);
+"#,
 ];
 
 use rusqlite::OptionalExtension;

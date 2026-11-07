@@ -34,7 +34,23 @@ async fn main() -> anyhow::Result<()> {
     let db = Db::open(&settings.data_dir.join("netrack.db"), settings.tz).await?;
     let runner = Runner::with_default_providers(db.clone());
     let (reload_tx, reload_rx) = watch::channel(());
-    let scheduler = Arc::new(Scheduler::spawn(db.clone(), runner.clone(), reload_rx));
+    let scheduler = Arc::new(Scheduler::spawn(
+        db.clone(),
+        runner.clone(),
+        reload_rx.clone(),
+    ));
+
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
+    let dispatcher = netrack::integrations::IntegrationDispatcher::new(
+        db.clone(),
+        runner.subscribe(),
+        reload_rx,
+        http_client,
+    );
+    dispatcher.spawn();
 
     if settings.run_on_startup {
         let (runner, db) = (runner.clone(), db.clone());

@@ -1,6 +1,7 @@
 pub mod api;
 pub mod auth;
 pub mod db;
+pub mod integrations;
 pub mod measure;
 pub mod net;
 pub mod providers;
