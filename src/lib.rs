@@ -3,4 +3,5 @@ pub mod measure;
 pub mod net;
 pub mod providers;
 pub mod runner;
+pub mod scheduler;
 pub mod settings;
