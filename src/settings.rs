@@ -26,7 +26,8 @@ impl Settings {
         let data_dir = vars
             .get("NETRACK_DATA_DIR")
             .map_or_else(|| PathBuf::from("/data"), PathBuf::from);
-        let tz = match vars.get("TZ") {
+        // Empty means unset: compose passes `TZ=${TZ}` through even when unset.
+        let tz = match vars.get("TZ").map(|v| v.trim()).filter(|v| !v.is_empty()) {
             Some(v) => v
                 .parse::<Tz>()
                 .map_err(|e| anyhow!("invalid TZ {v:?}: {e}"))?,
@@ -82,6 +83,14 @@ mod tests {
         assert_eq!(s.data_dir, PathBuf::from("/tmp/x"));
         assert_eq!(s.tz, chrono_tz::America::Sao_Paulo);
         assert!(s.run_on_startup);
+    }
+
+    #[test]
+    fn empty_tz_is_utc() {
+        for tz in ["", "  "] {
+            let s = Settings::from_map(&map(&[("TZ", tz)])).unwrap();
+            assert_eq!(s.tz, chrono_tz::UTC);
+        }
     }
 
     #[test]
