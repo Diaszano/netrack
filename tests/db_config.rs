@@ -74,3 +74,15 @@ async fn local_fields_recomputed_when_tz_changes() {
         .unwrap();
     assert_eq!((h, w), (23, 2));
 }
+
+#[tokio::test]
+async fn valid_cron_persists_and_survives_rejected_set() {
+    let db = Db::open_in_memory(Tz::UTC).await.unwrap();
+    config::set(&db, "cron", "*/15 * * * *").await.unwrap();
+    assert_eq!(config::load(&db).await.unwrap().cron, "*/15 * * * *");
+    config::set(&db, "retention_days", "30").await.unwrap();
+    assert!(config::set(&db, "retention_days", "0").await.is_err());
+    assert!(config::set(&db, "cron", "nope").await.is_err());
+    let c = config::load(&db).await.unwrap();
+    assert_eq!((c.retention_days, c.cron.as_str()), (30, "*/15 * * * *"));
+}

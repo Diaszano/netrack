@@ -15,14 +15,18 @@ CREATE TABLE speedtests (
 CREATE INDEX speedtests_created_at ON speedtests(created_at);
 "#];
 
+use rusqlite::OptionalExtension;
+
 /// Applies pending migrations, tracking progress in `meta.schema_version`.
 pub fn run(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
-    let current: usize = conn
-        .query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get::<_, String>(0))
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+    let stored: Option<String> = conn
+        .query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0))
+        .optional()?;
+    let current: usize = match stored {
+        Some(v) => v.parse().map_err(|_| anyhow::anyhow!("invalid meta.schema_version: {v:?}"))?,
+        None => 0,
+    };
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(current) {
         let tx = conn.transaction()?;
         tx.execute_batch(sql)?;

@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context, anyhow};
 use chrono::{Datelike, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 /// Cheap-to-clone handle to a single SQLite connection.
 #[derive(Clone)]
@@ -80,7 +80,7 @@ fn sync_tz(conn: &mut Connection, tz: Tz) -> anyhow::Result<()> {
     let tz_name = tz.name();
     let stored: Option<String> = conn
         .query_row("SELECT value FROM meta WHERE key = 'tz'", [], |r| r.get(0))
-        .ok();
+        .optional()?;
     if stored.as_deref() == Some(tz_name) {
         return Ok(());
     }
