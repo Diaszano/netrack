@@ -205,9 +205,7 @@ impl Ookla {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(ProviderError::Binary(format!(
-                "speedtest failed: {stderr}"
-            )));
+            return Err(ProviderError::Binary(format!("speedtest failed: {stderr}")));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);

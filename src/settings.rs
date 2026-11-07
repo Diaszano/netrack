@@ -3,8 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use anyhow::{Context, anyhow};
 use chrono_tz::Tz;
 
-pub const DEFAULT_PREVIEW_MESSAGE: &str =
-    "Demonstração ativa. Modificações estão desabilitadas.";
+pub const DEFAULT_PREVIEW_MESSAGE: &str = "Demonstração ativa. Modificações estão desabilitadas.";
 
 #[derive(Debug, Clone)]
 pub struct Settings {

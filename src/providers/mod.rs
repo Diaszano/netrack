@@ -72,8 +72,10 @@ pub trait SpeedProvider: Send + Sync {
 /// Builds the provider selected by `cfg`. HTTP clients are created per run
 /// from `RunOptions::local_addr`.
 pub fn build_provider(cfg: &AppConfig) -> Box<dyn SpeedProvider> {
-    let data_dir = std::env::var("NETRACK_DATA_DIR")
-        .map_or_else(|_| std::path::PathBuf::from("/data"), std::path::PathBuf::from);
+    let data_dir = std::env::var("NETRACK_DATA_DIR").map_or_else(
+        |_| std::path::PathBuf::from("/data"),
+        std::path::PathBuf::from,
+    );
     build_provider_in(cfg, &data_dir)
 }
 

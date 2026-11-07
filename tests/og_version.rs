@@ -99,12 +99,7 @@ impl TestApp {
         (status, headers, body)
     }
 
-    async fn post_json(
-        &self,
-        uri: &str,
-        body: Value,
-        cookie: Option<&str>,
-    ) -> (StatusCode, Value) {
+    async fn post_json(&self, uri: &str, body: Value, cookie: Option<&str>) -> (StatusCode, Value) {
         let mut req = Request::builder()
             .method(Method::POST)
             .uri(uri)
@@ -311,7 +306,11 @@ async fn test_preview_mode_blocks_mutations_with_custom_message() {
     assert_eq!(err["error"], custom_msg);
 
     let (status, err) = app
-        .post_json("/api/auth/password", json!({ "new_password": "secret" }), None)
+        .post_json(
+            "/api/auth/password",
+            json!({ "new_password": "secret" }),
+            None,
+        )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(err["error"], custom_msg);

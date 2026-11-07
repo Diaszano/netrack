@@ -16,20 +16,20 @@ pub struct VersionInfo {
 }
 
 pub fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
-    let s = s.trim().trim_start_matches(|c| c == 'v' || c == 'V');
+    let s = s.trim().trim_start_matches(['v', 'V']);
     let mut parts = s.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts
         .next()
         .and_then(|p| {
-            let clean = p.split(|c| c == '-' || c == '+').next().unwrap_or(p);
+            let clean = p.split(['-', '+']).next().unwrap_or(p);
             clean.parse().ok()
         })
         .unwrap_or(0);
     let patch = parts
         .next()
         .and_then(|p| {
-            let clean = p.split(|c| c == '-' || c == '+').next().unwrap_or(p);
+            let clean = p.split(['-', '+']).next().unwrap_or(p);
             clean.parse().ok()
         })
         .unwrap_or(0);
@@ -44,7 +44,7 @@ pub fn is_newer(current: &str, latest: &str) -> bool {
 }
 
 pub fn clean_version_tag(tag: &str) -> String {
-    tag.trim().trim_start_matches(|c| c == 'v' || c == 'V').to_string()
+    tag.trim().trim_start_matches(['v', 'V']).to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -53,12 +53,14 @@ struct GithubRelease {
     name: Option<String>,
 }
 
+type VersionCache = Arc<RwLock<Option<(Instant, Option<String>)>>>;
+
 #[derive(Clone)]
 pub struct VersionChecker {
     pub current_version: String,
     pub release_url: String,
     cache_ttl: Duration,
-    cache: Arc<RwLock<Option<(Instant, Option<String>)>>>,
+    cache: VersionCache,
     client: reqwest::Client,
 }
 

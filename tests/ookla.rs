@@ -113,8 +113,7 @@ async fn ookla_consent_records_license_agreement() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["ok"], true);
 
-    let (status, status_body) =
-        call(&ctx.app, Method::GET, "/api/system/ookla/status", None).await;
+    let (status, status_body) = call(&ctx.app, Method::GET, "/api/system/ookla/status", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(status_body["consented"], true);
     assert_eq!(status_body["installed"], false);
@@ -281,7 +280,10 @@ EOF
     assert_eq!(m.upload, 50.0);
     assert_eq!(m.server_id.as_deref(), Some("12345"));
     assert_eq!(m.server_name.as_deref(), Some("Test Server"));
-    assert_eq!(m.server_host.as_deref(), Some("speedtest.curitiba.net:8080"));
+    assert_eq!(
+        m.server_host.as_deref(),
+        Some("speedtest.curitiba.net:8080")
+    );
     assert_eq!(m.result_id.as_deref(), Some("result-abc-123"));
 }
 

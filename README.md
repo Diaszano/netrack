@@ -1,9 +1,28 @@
 # netrack
 
-Monitor de velocidade de internet auto-hospedado, escrito em Rust. Roda testes
-de velocidade (Cloudflare e LibreSpeed) em intervalos agendados, guarda o
-histórico em SQLite e expõe tudo por uma API JSON. Imagem Docker estática
-(`scratch`, ~11 MB) para `linux/amd64` e `linux/arm64`.
+Monitor de velocidade de internet auto-hospedado, escrito em Rust. Executa testes de velocidade (**Cloudflare**, **LibreSpeed** e **Ookla Speedtest CLI**) em intervalos agendados, armazena o histórico em SQLite e serve uma interface web responsiva (**Painel denso**, bilíngue `pt-BR`/`en`) junto de uma API HTTP JSON e exportador Prometheus em um único binário estático (`scratch`, ~11 MB) para `linux/amd64` e `linux/arm64`.
+
+## Funcionalidades
+
+- **3 Provedores de Teste**:
+  - **Cloudflare** (`speed.cloudflare.com`) nativo em Rust.
+  - **LibreSpeed** com lista pública de servidores ou URL customizada.
+  - **Ookla Speedtest CLI** baixado sob demanda em `/data/bin/speedtest` apenas após aceite explícito da licença na interface ou API.
+- **Interface Web Embutida (`rust-embed`)**:
+  - Zero dependências de CDN em tempo de execução (fontes *Space Grotesk*, *Plus Jakarta Sans* e *JetBrains Mono* embutidas).
+  - Gráficos SVG nativos (medidores radiais, histórico de linha/área, mapa de calor semanal 7×24 e médias por hora).
+  - Internacionalização automática (`pt-BR` e `en`) extensível via arquivos JSON em `web/locales/`.
+- **Segurança e Modos de Acesso**:
+  - Níveis de proteção por senha (Argon2id + sessões em SQLite): `none` (sem senha), `public` (leitura pública, alterações protegidas) e `protected` (tudo exige login).
+- **Notificações e Integrações (8 canais × 6 eventos)**:
+  - Canais: **Discord**, **Telegram**, **Pushover**, **Gotify**, **ntfy**, **Webhook genérico**, **InfluxDB v2** e **Healthchecks**.
+  - Eventos: `speedtest.started`, `speedtest.finished`, `speedtest.failed`, `minute.passed`, `config.updated`, `expected.updated`.
+- **Observabilidade e Dados**:
+  - Endpoint **Prometheus** (`/api/prometheus/metrics`) com suporte a Basic Auth.
+  - Exportação/importação em **JSON** e **CSV**, além de importação compatível com **MySpeed**.
+  - Imagem **Open Graph** dinâmica (`/api/opengraph/image`) com o último resultado.
+- **Multi-instância (Nós Remotos)**:
+  - Cadastro de múltiplos nós `netrack` e alternância transparente na interface via proxy reverso com streaming (`/api/nodes/{id}/proxy/*`).
 
 ## Como rodar
 
@@ -14,29 +33,29 @@ docker compose -f docker-compose.example.yml up -d
 curl http://localhost:5216/healthz   # ok
 ```
 
-Use `docker-compose.example.yml` como base. Ele usa `network_mode: host` para
-que o teste meça a interface real do host.
+Use `docker-compose.example.yml` como base. Ele usa `network_mode: host` para que o teste meça a interface real do host.
 
-O container roda como UID 65534 (`nobody`). O diretório montado em `/data`
-precisa ser gravável por esse UID (`chown 65534:65534 ./data`). Com volume
-nomeado do Docker, as permissões já vêm corretas da imagem.
+O container roda como UID 65534 (`nobody`). O diretório montado em `/data` precisa ser gravável por esse UID (`chown 65534:65534 ./data`). Com volume nomeado do Docker, as permissões já vêm corretas da imagem.
 
 ## Variáveis de ambiente
 
 | Variável | Padrão | Descrição |
 |---|---|---|
 | `NETRACK_PORT` | `5216` | Porta HTTP (escuta em `0.0.0.0` e `[::]`) |
-| `NETRACK_DATA_DIR` | `/data` | Onde fica o banco SQLite |
-| `TZ` | `UTC` | Fuso horário usado no agendamento (ex.: `America/Sao_Paulo`); vazio = `UTC` |
-| `RUN_TEST_ON_STARTUP` | `false` | Executa um teste ao iniciar |
+| `NETRACK_DATA_DIR` | `/data` | Diretório do banco SQLite e binário opcional do Ookla |
+| `TZ` | `UTC` | Fuso horário usado no agendamento e estatísticas (ex.: `America/Sao_Paulo`); vazio = `UTC` |
+| `RUN_TEST_ON_STARTUP` | `false` | Executa um teste imediatamente ao iniciar |
+| `PREVIEW_MODE` | `false` | Modo demonstração: bloqueia mutações (`403 Forbidden`) e exibe aviso na UI |
+| `PREVIEW_MESSAGE` | *(padrão)* | Mensagem customizada exibida no banner quando `PREVIEW_MODE=true` |
 | `RUST_LOG` | `info` | Nível de log (`info`, `debug`, ...) |
 
 ## Portas
 
-- `5216/tcp`: API HTTP (sem `network_mode: host`, publique com `-p 5216:5216`).
+- `5216/tcp`: Interface Web e API HTTP (sem `network_mode: host`, publique com `-p 5216:5216`).
 
-## API
+## API HTTP
 
+### Testes de Velocidade e Configuração
 - `GET /healthz`
 - `GET /api/speedtests`
 - `POST /api/speedtests/run`
@@ -47,9 +66,35 @@ nomeado do Docker, as permissões já vêm corretas da imagem.
 - `GET /api/speedtests/events` (SSE)
 - `GET /api/speedtests/{id}`, `DELETE /api/speedtests/{id}`
 - `GET /api/config`, `PATCH /api/config/{key}`
+
+### Sistema e Provedores
 - `GET /api/system/status`
 - `GET /api/system/interfaces`
 - `GET /api/system/servers/librespeed`
+- `GET /api/system/servers/ookla`
+- `GET /api/system/ookla/status`
+- `POST /api/system/ookla/consent`
+- `POST /api/system/ookla/install`
+- `GET /api/opengraph/image`
+
+### Autenticação
+- `GET /api/auth/status`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `POST /api/auth/password`
+
+### Integrações, Métricas, Dados e Multi-Nós
+- `GET /api/integrations`, `POST /api/integrations`
+- `PUT /api/integrations/{id}`, `DELETE /api/integrations/{id}`
+- `POST /api/integrations/{id}/test`
+- `GET /api/prometheus/metrics`
+- `GET /api/data/stats`
+- `GET /api/data/export?format=json|csv`
+- `POST /api/data/import`
+- `DELETE /api/data/reset`
+- `GET /api/nodes`, `POST /api/nodes`
+- `PUT /api/nodes/{id}`, `DELETE /api/nodes/{id}`
+- `ANY /api/nodes/{id}/proxy/{*path}`
 
 ## Benchmarks
 

@@ -139,7 +139,10 @@ async fn update_node(
     }
 }
 
-async fn delete_node(State(s): State<AppState>, ApiPath(id): ApiPath<i64>) -> ApiResult<StatusCode> {
+async fn delete_node(
+    State(s): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+) -> ApiResult<StatusCode> {
     let deleted = super::delete(&s.db, id).await?;
     if deleted {
         Ok(StatusCode::NO_CONTENT)
@@ -194,7 +197,11 @@ async fn node_status(
         }
         Ok(resp) => {
             let status = resp.status();
-            (false, None, Some(format!("remote returned status {status}")))
+            (
+                false,
+                None,
+                Some(format!("remote returned status {status}")),
+            )
         }
         Err(e) => (false, None, Some(e.to_string())),
     };
@@ -340,8 +347,8 @@ async fn proxy_req(
         )
     })?;
 
-    let status = StatusCode::from_u16(resp.status().as_u16())
-        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let status =
+        StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
 
     let mut response_builder = Response::builder().status(status);
     for (k, v) in resp.headers() {

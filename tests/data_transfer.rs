@@ -136,6 +136,7 @@ impl TestApp {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert_sample_test(
     app: &TestApp,
     server_name: Option<&str>,
@@ -256,7 +257,17 @@ async fn test_export_and_import_native_roundtrip() {
     let app1 = TestApp::new().await;
     let time1 = Utc.with_ymd_and_hms(2026, 11, 7, 10, 0, 0).unwrap();
     let time2 = Utc.with_ymd_and_hms(2026, 11, 7, 11, 0, 0).unwrap();
-    insert_sample_test(&app1, Some("Server 1"), 200.0, 100.0, 15.0, 2.0, 14.0, time1).await;
+    insert_sample_test(
+        &app1,
+        Some("Server 1"),
+        200.0,
+        100.0,
+        15.0,
+        2.0,
+        14.0,
+        time1,
+    )
+    .await;
     insert_sample_test(&app1, Some("Server 2"), 350.0, 150.0, 8.0, 0.8, 12.5, time2).await;
 
     // Export from app1
@@ -366,7 +377,7 @@ async fn test_import_csv_format() {
         "id,created_at,kind,provider,server_id,server_name,server_host,result_id,ping,jitter,download,upload,duration,error\n\
 1,{},auto,cloudflare,1,São Paulo,gru.cloudflare.com,res-1,12.34,1.23,150.45,45.67,15.2,\n\
 2,{},custom,librespeed,2,Rio de Janeiro,gig.librespeed.org,res-2,18.50,2.10,210.00,85.00,12.0,\n",
-        now - 3600_000,
+        now - 3_600_000,
         now,
     );
 
@@ -430,17 +441,7 @@ async fn test_data_stats_size_and_count() {
         "db size must be greater than 0"
     );
 
-    insert_sample_test(
-        &app,
-        Some("Test"),
-        100.0,
-        50.0,
-        10.0,
-        1.0,
-        10.0,
-        Utc::now(),
-    )
-    .await;
+    insert_sample_test(&app, Some("Test"), 100.0, 50.0, 10.0, 1.0, 10.0, Utc::now()).await;
 
     let (_, _, body2) = app.get("/api/data/stats", None).await;
     let stats2: Value = serde_json::from_str(&body2).unwrap();

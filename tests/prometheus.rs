@@ -293,11 +293,15 @@ async fn prometheus_metrics_with_failed_test() {
     let (status, _, body) = app.get("/api/prometheus/metrics", None, None).await;
     assert_eq!(status, StatusCode::OK);
 
-    assert!(body.contains("netrack_test_success{provider=\"ookla\",server_id=\"999\",server_name=\"Ookla Server\"} 0"));
+    assert!(body.contains(
+        "netrack_test_success{provider=\"ookla\",server_id=\"999\",server_name=\"Ookla Server\"} 0"
+    ));
     assert!(body.contains("netrack_ping_latency_ms{provider=\"ookla\",server_id=\"999\",server_name=\"Ookla Server\"} 0"));
     assert!(body.contains("netrack_download_speed_mbps{provider=\"ookla\",server_id=\"999\",server_name=\"Ookla Server\"} 0"));
     assert!(body.contains("netrack_upload_speed_mbps{provider=\"ookla\",server_id=\"999\",server_name=\"Ookla Server\"} 0"));
-    assert!(body.contains("netrack_jitter_ms{provider=\"ookla\",server_id=\"999\",server_name=\"Ookla Server\"} 0"));
+    assert!(body.contains(
+        "netrack_jitter_ms{provider=\"ookla\",server_id=\"999\",server_name=\"Ookla Server\"} 0"
+    ));
     assert!(body.contains("netrack_test_duration_seconds{provider=\"ookla\",server_id=\"999\",server_name=\"Ookla Server\"} 5"));
 }
 
@@ -334,7 +338,9 @@ async fn prometheus_metrics_labels_null_and_escaping() {
     assert_eq!(status, StatusCode::OK);
 
     // Must handle null cleanly without "None" or panicking
-    assert!(body.contains("netrack_download_speed_mbps{provider=\"cloudflare\",server_id=\"\",server_name=\"\"} 200"));
+    assert!(body.contains(
+        "netrack_download_speed_mbps{provider=\"cloudflare\",server_id=\"\",server_name=\"\"} 200"
+    ));
     assert!(!body.contains("None"));
     assert!(!body.contains("null"));
 
@@ -385,7 +391,9 @@ async fn prometheus_auth_mode_public() {
     let (status, headers, body) = app.get("/api/prometheus/metrics", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(
-        headers.get(header::WWW_AUTHENTICATE).and_then(|h| h.to_str().ok()),
+        headers
+            .get(header::WWW_AUTHENTICATE)
+            .and_then(|h| h.to_str().ok()),
         Some("Basic realm=\"netrack\"")
     );
     assert!(body.contains("unauthorized"));
@@ -401,7 +409,9 @@ async fn prometheus_auth_mode_public() {
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(
-        headers.get(header::WWW_AUTHENTICATE).and_then(|h| h.to_str().ok()),
+        headers
+            .get(header::WWW_AUTHENTICATE)
+            .and_then(|h| h.to_str().ok()),
         Some("Basic realm=\"netrack\"")
     );
 
@@ -455,7 +465,11 @@ async fn prometheus_auth_mode_public() {
 
     // 7. Malformed Basic Auth -> 401
     let (status, _, _) = app
-        .get("/api/prometheus/metrics", None, Some("Basic not_valid_base64!"))
+        .get(
+            "/api/prometheus/metrics",
+            None,
+            Some("Basic not_valid_base64!"),
+        )
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
@@ -473,13 +487,16 @@ async fn prometheus_auth_mode_public() {
 #[tokio::test]
 async fn prometheus_auth_mode_protected() {
     let app = TestApp::new().await;
-    app.set_password("mypassword", PasswordMode::Protected).await;
+    app.set_password("mypassword", PasswordMode::Protected)
+        .await;
 
     // 1. Unauthenticated request -> 401 with WWW-Authenticate header
     let (status, headers, body) = app.get("/api/prometheus/metrics", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(
-        headers.get(header::WWW_AUTHENTICATE).and_then(|h| h.to_str().ok()),
+        headers
+            .get(header::WWW_AUTHENTICATE)
+            .and_then(|h| h.to_str().ok()),
         Some("Basic realm=\"netrack\"")
     );
     assert!(body.contains("unauthorized"));
@@ -495,7 +512,9 @@ async fn prometheus_auth_mode_protected() {
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(
-        headers.get(header::WWW_AUTHENTICATE).and_then(|h| h.to_str().ok()),
+        headers
+            .get(header::WWW_AUTHENTICATE)
+            .and_then(|h| h.to_str().ok()),
         Some("Basic realm=\"netrack\"")
     );
 

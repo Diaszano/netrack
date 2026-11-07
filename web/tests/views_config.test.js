@@ -6,7 +6,8 @@ import { createTranslator } from "../i18n.js";
 import { createApiClient } from "../api.js";
 import { renderServers } from "../views/servers.js";
 import { renderSettings, saveConfigDiff } from "../views/settings.js";
-import { renderNodes, renderIntegrations } from "../views/seams.js";
+import { renderNodes } from "../views/nodes.js";
+import { renderIntegrations } from "../views/integrations.js";
 import {
   extractServersFormValues,
   extractSettingsFormValues,
@@ -178,7 +179,7 @@ test("config_patch_maps_camel_to_snake_and_surfaces_400", async () => {
   );
 });
 
-test("nodes_and_integrations_seams_render_system_metrics_and_placeholders", () => {
+test("nodes_and_integrations_views_render_system_metrics_and_empty_states", () => {
   const state = createMockState();
   const nodesHtml = renderNodes(state, { t: tPt });
 
@@ -188,13 +189,13 @@ test("nodes_and_integrations_seams_render_system_metrics_and_placeholders", () =
   assert.ok(nodesHtml.includes("14,5") || nodesHtml.includes("14.5"), "Must render CPU percent");
   assert.ok(nodesHtml.includes("40 MB") || nodesHtml.includes("42 MB"), "Must render RAM in MB");
 
-  // 2. Seam for remote nodes
-  assert.ok(nodesHtml.includes("nodes.seamTitle") || nodesHtml.includes("Múltiplos nós"), "Must render multiple nodes seam title");
+  // 2. Remote nodes empty state
+  assert.ok(nodesHtml.includes(tPt("nodes.seamTitle")), "Must render remote nodes empty state");
 
-  // 3. Integrations empty state
+  // 3. Integrations empty state and channel selector
   const intHtml = renderIntegrations(state, { t: tPt });
-  assert.ok(intHtml.includes("integrations.emptyTitle") || intHtml.includes("Notificações e integrações"), "Must render integrations empty title");
-  assert.ok(intHtml.includes("Discord") || intHtml.includes("Telegram"), "Must mention upcoming integrations");
+  assert.ok(intHtml.includes(tPt("integrations.emptyTitle")), "Must render integrations empty title");
+  assert.ok(intHtml.includes("Discord") && intHtml.includes("Telegram"), "Must include Discord and Telegram channels");
 });
 
 test("servers_form_preserves_librespeed_config_when_provider_is_cloudflare", async () => {

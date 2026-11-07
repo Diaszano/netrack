@@ -79,10 +79,10 @@ pub fn parse_timestamp(val: &Value) -> Result<i64, String> {
                     return Ok(naive.and_utc().timestamp_millis());
                 }
             }
-            if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-                if let Some(naive) = naive_date.and_hms_opt(0, 0, 0) {
-                    return Ok(naive.and_utc().timestamp_millis());
-                }
+            if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                && let Some(naive) = naive_date.and_hms_opt(0, 0, 0)
+            {
+                return Ok(naive.and_utc().timestamp_millis());
             }
             Err(format!("cannot parse date string: {s}"))
         }
@@ -170,8 +170,8 @@ pub fn parse_json_records(value: &Value) -> Result<Vec<ImportRecord>, String> {
                 .or_else(|| obj.get("createdOn"))
         };
 
-        let created_at_val = created_at_val
-            .ok_or_else(|| format!("record at index {idx} is missing timestamp"))?;
+        let created_at_val =
+            created_at_val.ok_or_else(|| format!("record at index {idx} is missing timestamp"))?;
         let created_at = parse_timestamp(created_at_val)
             .map_err(|e| format!("record at index {idx} has invalid timestamp: {e}"))?;
 
@@ -220,10 +220,12 @@ pub fn parse_json_records(value: &Value) -> Result<Vec<ImportRecord>, String> {
             server_id = parse_opt_string(obj.get("serverId").or_else(|| obj.get("server_id")));
         }
         if server_name.is_none() {
-            server_name = parse_opt_string(obj.get("serverName").or_else(|| obj.get("server_name")));
+            server_name =
+                parse_opt_string(obj.get("serverName").or_else(|| obj.get("server_name")));
         }
         if server_host.is_none() {
-            server_host = parse_opt_string(obj.get("serverHost").or_else(|| obj.get("server_host")));
+            server_host =
+                parse_opt_string(obj.get("serverHost").or_else(|| obj.get("server_host")));
         }
 
         let result_id = parse_opt_string(obj.get("resultId").or_else(|| obj.get("result_id")));
@@ -235,33 +237,30 @@ pub fn parse_json_records(value: &Value) -> Result<Vec<ImportRecord>, String> {
 
         let mut download = parse_opt_f64(obj.get("download"))
             .map_err(|e| format!("record at index {idx} has invalid download: {e}"))?;
-        if let Some(ref mut dl) = download {
-            if *dl > 100_000.0 {
-                *dl = round2(*dl / 1_000_000.0);
-            }
+        if let Some(ref mut dl) = download
+            && *dl > 100_000.0
+        {
+            *dl = round2(*dl / 1_000_000.0);
         }
 
         let mut upload = parse_opt_f64(obj.get("upload"))
             .map_err(|e| format!("record at index {idx} has invalid upload: {e}"))?;
-        if let Some(ref mut ul) = upload {
-            if *ul > 100_000.0 {
-                *ul = round2(*ul / 1_000_000.0);
-            }
+        if let Some(ref mut ul) = upload
+            && *ul > 100_000.0
+        {
+            *ul = round2(*ul / 1_000_000.0);
         }
 
-        let mut duration = parse_opt_f64(obj.get("duration").or_else(|| {
-            if is_myspeed {
-                obj.get("time")
-            } else {
-                None
-            }
-        }))
+        let mut duration = parse_opt_f64(
+            obj.get("duration")
+                .or_else(|| if is_myspeed { obj.get("time") } else { None }),
+        )
         .map_err(|e| format!("record at index {idx} has invalid duration: {e}"))?;
 
-        if let Some(ref mut d) = duration {
-            if *d > 100.0 {
-                *d = round2(*d / 1000.0);
-            }
+        if let Some(ref mut d) = duration
+            && *d > 100.0
+        {
+            *d = round2(*d / 1000.0);
         }
 
         let error = parse_opt_string(obj.get("error"));
@@ -345,8 +344,8 @@ pub fn parse_csv_records(content: &str) -> Result<Vec<ImportRecord>, String> {
                 .filter(|s| !s.is_empty())
         };
 
-        let created_at_str = get("created_at")
-            .ok_or_else(|| format!("CSV line {idx} missing created_at"))?;
+        let created_at_str =
+            get("created_at").ok_or_else(|| format!("CSV line {idx} missing created_at"))?;
         let created_at = parse_timestamp(&Value::String(created_at_str.to_string()))
             .map_err(|e| format!("CSV line {idx} invalid created_at: {e}"))?;
 
@@ -446,10 +445,7 @@ pub async fn reset_database(db: &Db) -> anyhow::Result<()> {
         let _ = tx.execute("DELETE FROM sqlite_sequence WHERE name = 'speedtests'", []);
         tx.execute("DELETE FROM config", [])?;
         for (k, v) in crate::db::config::DEFAULTS {
-            tx.execute(
-                "INSERT INTO config (key, value) VALUES (?1, ?2)",
-                [*k, *v],
-            )?;
+            tx.execute("INSERT INTO config (key, value) VALUES (?1, ?2)", [*k, *v])?;
         }
         tx.commit()?;
         Ok(())

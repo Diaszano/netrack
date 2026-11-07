@@ -83,9 +83,8 @@ impl Serialize for NodeStatusResponse {
 
 pub async fn list(db: &Db) -> anyhow::Result<Vec<Node>> {
     db.call(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, name, url, password, created_at FROM nodes ORDER BY id ASC",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, name, url, password, created_at FROM nodes ORDER BY id ASC")?;
         let rows = stmt.query_map([], |row| {
             Ok(Node {
                 id: row.get(0)?,
@@ -106,9 +105,8 @@ pub async fn list(db: &Db) -> anyhow::Result<Vec<Node>> {
 
 pub async fn get(db: &Db, id: i64) -> anyhow::Result<Option<Node>> {
     db.call(move |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, name, url, password, created_at FROM nodes WHERE id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, name, url, password, created_at FROM nodes WHERE id = ?1")?;
         let mut rows = stmt.query_map(params![id], |row| {
             Ok(Node {
                 id: row.get(0)?,
@@ -161,9 +159,8 @@ pub async fn update(
     db.call(move |conn| {
         let tx = conn.transaction()?;
         let current: Option<Node> = {
-            let mut stmt = tx.prepare(
-                "SELECT id, name, url, password, created_at FROM nodes WHERE id = ?1",
-            )?;
+            let mut stmt =
+                tx.prepare("SELECT id, name, url, password, created_at FROM nodes WHERE id = ?1")?;
             let mut rows = stmt.query_map(params![id], |row| {
                 Ok(Node {
                     id: row.get(0)?,

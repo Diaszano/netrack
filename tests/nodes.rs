@@ -299,13 +299,7 @@ async fn test_node_crud_and_validation() {
 
     // 5. GET single node
     let (status, _, fetched) = app
-        .request(
-            Method::GET,
-            &format!("/api/nodes/{id}"),
-            None,
-            None,
-            None,
-        )
+        .request(Method::GET, &format!("/api/nodes/{id}"), None, None, None)
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(fetched["id"], id);
@@ -363,13 +357,7 @@ async fn test_node_crud_and_validation() {
 
     // 9. Node now 404
     let (status, _, _) = app
-        .request(
-            Method::GET,
-            &format!("/api/nodes/{id}"),
-            None,
-            None,
-            None,
-        )
+        .request(Method::GET, &format!("/api/nodes/{id}"), None, None, None)
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
@@ -540,7 +528,10 @@ async fn test_transparent_proxy_get_and_post() {
             "Proxy must inject Authorization header"
         );
         assert!(
-            cookie_hdr.map(|s| s.as_str()).unwrap_or("").contains("netrack_session=proxy-secret-token"),
+            cookie_hdr
+                .map(|s| s.as_str())
+                .unwrap_or("")
+                .contains("netrack_session=proxy-secret-token"),
             "Proxy must inject netrack_session cookie"
         );
     }

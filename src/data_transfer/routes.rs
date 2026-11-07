@@ -7,7 +7,10 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{escape_csv, get_data_stats, insert_records, parse_csv_records, parse_json_records, reset_database};
+use super::{
+    escape_csv, get_data_stats, insert_records, parse_csv_records, parse_json_records,
+    reset_database,
+};
 use crate::api::{ApiError, ApiQuery, ApiResult, AppState};
 use crate::db::tests_repo;
 
@@ -59,8 +62,14 @@ async fn export_data(
                     row.kind.as_str(),
                     escape_csv(&row.provider),
                     row.server_id.as_deref().map(escape_csv).unwrap_or_default(),
-                    row.server_name.as_deref().map(escape_csv).unwrap_or_default(),
-                    row.server_host.as_deref().map(escape_csv).unwrap_or_default(),
+                    row.server_name
+                        .as_deref()
+                        .map(escape_csv)
+                        .unwrap_or_default(),
+                    row.server_host
+                        .as_deref()
+                        .map(escape_csv)
+                        .unwrap_or_default(),
                     row.result_id.as_deref().map(escape_csv).unwrap_or_default(),
                     row.ping.map(|v| v.to_string()).unwrap_or_default(),
                     row.jitter.map(|v| v.to_string()).unwrap_or_default(),
@@ -81,20 +90,22 @@ async fn export_data(
                 .body(axum::body::Body::from(csv_str))
                 .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
-        _ => Err(ApiError::bad_request("unsupported format, expected 'json' or 'csv'")),
+        _ => Err(ApiError::bad_request(
+            "unsupported format, expected 'json' or 'csv'",
+        )),
     }
 }
 
-async fn import_data(
-    State(s): State<AppState>,
-    body: axum::body::Bytes,
-) -> ApiResult<Json<Value>> {
+async fn import_data(State(s): State<AppState>, body: axum::body::Bytes) -> ApiResult<Json<Value>> {
     let records = match serde_json::from_slice::<Value>(&body) {
         Ok(val) => parse_json_records(&val).map_err(ApiError::bad_request)?,
         Err(json_err) => {
             if let Ok(text) = std::str::from_utf8(&body) {
                 if text.trim().starts_with("id,created_at")
-                    || text.lines().next().map_or(false, |l| l.contains("created_at"))
+                    || text
+                        .lines()
+                        .next()
+                        .is_some_and(|l| l.contains("created_at"))
                 {
                     parse_csv_records(text).map_err(ApiError::bad_request)?
                 } else {

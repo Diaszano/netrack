@@ -138,14 +138,12 @@ async fn ookla_servers(State(s): State<AppState>) -> ApiResult<Json<Vec<OoklaSer
         ));
     }
 
-    let servers = ookla::list_servers(&bin_path)
-        .await
-        .map_err(|e| {
-            ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                format!("cannot list ookla servers: {e}"),
-            )
-        })?;
+    let servers = ookla::list_servers(&bin_path).await.map_err(|e| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            format!("cannot list ookla servers: {e}"),
+        )
+    })?;
 
     Ok(Json(servers))
 }

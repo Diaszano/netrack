@@ -47,10 +47,8 @@ fn extract_basic_auth(auth_header: &str) -> Option<(String, String)> {
     let auth_header = auth_header.trim();
     let b64 = if let Some(rest) = auth_header.strip_prefix("Basic ") {
         rest.trim()
-    } else if let Some(rest) = auth_header.strip_prefix("basic ") {
-        rest.trim()
     } else {
-        return None;
+        auth_header.strip_prefix("basic ")?.trim()
     };
     let bytes = decode_base64(b64)?;
     let decoded = String::from_utf8(bytes).ok()?;
@@ -111,18 +109,26 @@ pub fn format_metrics(latest: Option<&SpeedtestRow>) -> String {
     if let Some(row) = latest {
         let labels = format_labels(row);
         let val = row.duration.unwrap_or(0.0);
-        out.push_str(&format!("netrack_test_duration_seconds{{{labels}}} {val}\n"));
+        out.push_str(&format!(
+            "netrack_test_duration_seconds{{{labels}}} {val}\n"
+        ));
     }
 
-    out.push_str("# HELP netrack_last_test_timestamp_seconds Timestamp of the last speed test in seconds\n");
+    out.push_str(
+        "# HELP netrack_last_test_timestamp_seconds Timestamp of the last speed test in seconds\n",
+    );
     out.push_str("# TYPE netrack_last_test_timestamp_seconds gauge\n");
     if let Some(row) = latest {
         let labels = format_labels(row);
         let val = row.created_at / 1000;
-        out.push_str(&format!("netrack_last_test_timestamp_seconds{{{labels}}} {val}\n"));
+        out.push_str(&format!(
+            "netrack_last_test_timestamp_seconds{{{labels}}} {val}\n"
+        ));
     }
 
-    out.push_str("# HELP netrack_test_success Whether the last speed test succeeded (1) or failed (0)\n");
+    out.push_str(
+        "# HELP netrack_test_success Whether the last speed test succeeded (1) or failed (0)\n",
+    );
     out.push_str("# TYPE netrack_test_success gauge\n");
     if let Some(row) = latest {
         let labels = format_labels(row);
@@ -141,16 +147,14 @@ pub async fn metrics_handler(State(state): State<AppState>, req: Request) -> Res
 
     if cfg.password_mode != PasswordMode::None {
         let auth_ctx = req.extensions().get::<AuthContext>();
-        let session_valid = auth_ctx.map_or(false, |c| c.authenticated);
+        let session_valid = auth_ctx.is_some_and(|c| c.authenticated);
 
         let basic_valid = if !session_valid {
             req.headers()
                 .get(header::AUTHORIZATION)
                 .and_then(|h| h.to_str().ok())
                 .and_then(extract_basic_auth)
-                .map_or(false, |(_user, pass)| {
-                    verify_password(&pass, &cfg.password_hash)
-                })
+                .is_some_and(|(_user, pass)| verify_password(&pass, &cfg.password_hash))
         } else {
             false
         };

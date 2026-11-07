@@ -140,9 +140,8 @@ pub async fn insert(db: &Db, t: NewSpeedtest, at: DateTime<Utc>) -> anyhow::Resu
 /// All stored speedtests, oldest first (`ORDER BY id ASC`).
 pub async fn all(db: &Db) -> anyhow::Result<Vec<SpeedtestRow>> {
     db.call(move |conn| {
-        let mut stmt = conn.prepare(&format!(
-            "SELECT {COLUMNS} FROM speedtests ORDER BY id ASC"
-        ))?;
+        let mut stmt =
+            conn.prepare(&format!("SELECT {COLUMNS} FROM speedtests ORDER BY id ASC"))?;
         let rows = stmt
             .query_map([], map_row)?
             .collect::<Result<Vec<_>, _>>()?;

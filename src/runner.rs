@@ -91,10 +91,7 @@ impl Runner {
 
     /// A runner that builds the provider selected in the config using `data_dir`.
     pub fn with_default_providers_in(db: Db, data_dir: PathBuf) -> Runner {
-        Runner::new(
-            db,
-            Arc::new(move |cfg| build_provider_in(cfg, &data_dir)),
-        )
+        Runner::new(db, Arc::new(move |cfg| build_provider_in(cfg, &data_dir)))
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<RunEvent> {
