@@ -159,7 +159,7 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
 
     let path = req.uri().path();
     // Specific API route exemptions
-    if path == "/api/auth/login" || path == "/api/auth/status" {
+    if path == "/api/auth/login" || path == "/api/auth/status" || path == "/api/prometheus/metrics" {
         return next.run(req).await;
     }
 

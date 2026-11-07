@@ -5,6 +5,7 @@ pub mod integrations;
 pub mod measure;
 pub mod net;
 pub mod providers;
+pub mod prometheus;
 pub mod runner;
 pub mod scheduler;
 pub mod settings;
