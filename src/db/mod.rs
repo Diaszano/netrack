@@ -54,7 +54,10 @@ impl Db {
         })
         .await
         .context("database init task panicked")??;
-        Ok(Db { conn: Arc::new(Mutex::new(conn)), tz })
+        Ok(Db {
+            conn: Arc::new(Mutex::new(conn)),
+            tz,
+        })
     }
 
     pub fn tz(&self) -> Tz {
@@ -68,7 +71,9 @@ impl Db {
     {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let mut guard = conn.lock().map_err(|_| anyhow!("database mutex poisoned"))?;
+            let mut guard = conn
+                .lock()
+                .map_err(|_| anyhow!("database mutex poisoned"))?;
             f(&mut guard)
         })
         .await

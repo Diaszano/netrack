@@ -40,7 +40,12 @@ impl Settings {
             },
             None => false,
         };
-        Ok(Self { port, data_dir, tz, run_on_startup })
+        Ok(Self {
+            port,
+            data_dir,
+            tz,
+            run_on_startup,
+        })
     }
 }
 
@@ -49,7 +54,10 @@ mod tests {
     use super::*;
 
     fn map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]

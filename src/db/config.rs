@@ -62,7 +62,10 @@ const DEFAULTS: &[(&str, &str)] = &[
 ];
 
 fn invalid(key: &str, reason: impl Into<String>) -> ConfigError {
-    ConfigError::Invalid { key: key.to_owned(), reason: reason.into() }
+    ConfigError::Invalid {
+        key: key.to_owned(),
+        reason: reason.into(),
+    }
 }
 
 fn parse_bool(key: &str, v: &str) -> Result<bool, ConfigError> {
@@ -107,7 +110,9 @@ fn parse_server_id(key: &str, v: &str) -> Result<Option<u32>, ConfigError> {
     if v == "auto" {
         return Ok(None);
     }
-    v.parse::<u32>().map(Some).map_err(|_| invalid(key, "expected auto or an integer"))
+    v.parse::<u32>()
+        .map(Some)
+        .map_err(|_| invalid(key, "expected auto or an integer"))
 }
 
 fn parse_url(key: &str, v: &str) -> Result<Option<String>, ConfigError> {
@@ -126,7 +131,9 @@ fn parse_interface(v: &str) -> Option<String> {
 }
 
 fn validate_cron(key: &str, v: &str) -> Result<(), ConfigError> {
-    v.parse::<croner::Cron>().map(|_| ()).map_err(|e| invalid(key, e.to_string()))
+    v.parse::<croner::Cron>()
+        .map(|_| ())
+        .map_err(|e| invalid(key, e.to_string()))
 }
 
 /// Validates a single key/value pair.
@@ -137,7 +144,9 @@ fn validate(key: &str, v: &str) -> Result<(), ConfigError> {
         "schedule_offset" | "paused" => parse_bool(key, v).map(|_| ()),
         "retention_days" => parse_retention(key, v).map(|_| ()),
         "expected_mode" => parse_mode(key, v).map(|_| ()),
-        "expected_ping" | "expected_download" | "expected_upload" => parse_number(key, v).map(|_| ()),
+        "expected_ping" | "expected_download" | "expected_upload" => {
+            parse_number(key, v).map(|_| ())
+        }
         "libre_server_id" => parse_server_id(key, v).map(|_| ()),
         "libre_url" => parse_url(key, v).map(|_| ()),
         "interface" => Ok(()),

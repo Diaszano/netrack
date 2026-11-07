@@ -138,7 +138,11 @@ pub async fn insert(db: &Db, t: NewSpeedtest, at: DateTime<Utc>) -> anyhow::Resu
 }
 
 /// Newest first; `before_id` is an exclusive cursor; `limit` is clamped to 1..=100.
-pub async fn list(db: &Db, before_id: Option<i64>, limit: u32) -> anyhow::Result<Vec<SpeedtestRow>> {
+pub async fn list(
+    db: &Db,
+    before_id: Option<i64>,
+    limit: u32,
+) -> anyhow::Result<Vec<SpeedtestRow>> {
     let limit = limit.clamp(1, 100);
     db.call(move |conn| {
         let mut stmt = conn.prepare(&format!(
@@ -155,14 +159,19 @@ pub async fn list(db: &Db, before_id: Option<i64>, limit: u32) -> anyhow::Result
 pub async fn get(db: &Db, id: i64) -> anyhow::Result<Option<SpeedtestRow>> {
     db.call(move |conn| {
         Ok(conn
-            .query_row(&format!("SELECT {COLUMNS} FROM speedtests WHERE id = ?1"), [id], map_row)
+            .query_row(
+                &format!("SELECT {COLUMNS} FROM speedtests WHERE id = ?1"),
+                [id],
+                map_row,
+            )
             .optional()?)
     })
     .await
 }
 
 pub async fn delete(db: &Db, id: i64) -> anyhow::Result<bool> {
-    db.call(move |conn| Ok(conn.execute("DELETE FROM speedtests WHERE id = ?1", [id])? > 0)).await
+    db.call(move |conn| Ok(conn.execute("DELETE FROM speedtests WHERE id = ?1", [id])? > 0))
+        .await
 }
 
 pub async fn delete_older_than(db: &Db, days: u32, now: DateTime<Utc>) -> anyhow::Result<u64> {
@@ -182,7 +191,9 @@ pub async fn last_successful(db: &Db, n: u32) -> anyhow::Result<Vec<SpeedtestRow
         let mut stmt = conn.prepare(&format!(
             "SELECT {COLUMNS} FROM speedtests WHERE error IS NULL ORDER BY id DESC LIMIT ?1"
         ))?;
-        let rows = stmt.query_map([n], map_row)?.collect::<Result<Vec<_>, _>>()?;
+        let rows = stmt
+            .query_map([n], map_row)?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     })
     .await

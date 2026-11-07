@@ -11,10 +11,16 @@ async fn defaults_loaded_on_fresh_db() {
     assert_eq!(c.provider, Provider::Cloudflare);
     assert_eq!(c.cron, "0 * * * *");
     assert_eq!(c.retention_days, 365);
-    assert_eq!((c.expected_ping, c.expected_download, c.expected_upload), (25.0, 100.0, 50.0));
+    assert_eq!(
+        (c.expected_ping, c.expected_download, c.expected_upload),
+        (25.0, 100.0, 50.0)
+    );
     assert!(!c.paused);
     assert!(c.schedule_offset);
-    assert_eq!((c.libre_server_id, c.libre_url, c.interface), (None, None, None));
+    assert_eq!(
+        (c.libre_server_id, c.libre_url, c.interface),
+        (None, None, None)
+    );
 }
 
 #[tokio::test]
@@ -25,7 +31,10 @@ async fn set_persists_value() {
     config::set(&db, "libre_server_id", "12").await.unwrap();
     config::set(&db, "provider", "librespeed").await.unwrap();
     let c = config::load(&db).await.unwrap();
-    assert_eq!((c.libre_server_id, c.provider), (Some(12), Provider::LibreSpeed));
+    assert_eq!(
+        (c.libre_server_id, c.provider),
+        (Some(12), Provider::LibreSpeed)
+    );
 }
 
 #[tokio::test]
@@ -41,7 +50,10 @@ async fn config_rejects_invalid_values() {
         ("libre_url", "ftp://x"),
     ] {
         let err = config::set(&db, k, v).await.unwrap_err();
-        assert!(matches!(err, ConfigError::Invalid { .. }), "{k}={v}: {err:?}");
+        assert!(
+            matches!(err, ConfigError::Invalid { .. }),
+            "{k}={v}: {err:?}"
+        );
     }
     assert_eq!(config::load(&db).await.unwrap(), before);
     let err = config::set(&db, "nope", "1").await.unwrap_err();
@@ -69,7 +81,13 @@ async fn local_fields_recomputed_when_tz_changes() {
 
     let db = Db::open(&path, Sao_Paulo).await.unwrap();
     let (h, w): (i64, i64) = db
-        .call(|c| Ok(c.query_row("SELECT local_hour, local_weekday FROM speedtests", [], |r| Ok((r.get(0)?, r.get(1)?)))?))
+        .call(|c| {
+            Ok(c.query_row(
+                "SELECT local_hour, local_weekday FROM speedtests",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?)
+        })
         .await
         .unwrap();
     assert_eq!((h, w), (23, 2));

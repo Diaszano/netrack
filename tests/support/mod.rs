@@ -5,6 +5,10 @@
 //! - `POST /up` — drains and discards the request body.
 //! - `GET /empty` — empty 200 response.
 //!
+//! Cloudflare-shaped: `GET /__down?bytes=N` (header `cf-meta-colo: POA`) and
+//! `POST /__up`. LibreSpeed-shaped: `GET /backend/garbage.php?ckSize=N` (N MiB),
+//! `GET|POST /backend/empty.php`, and `GET /servers.json` (public list shape).
+//!
 //! New routes go in [`router`]; new knobs go in [`MockOptions`].
 #![allow(dead_code)]
 
@@ -72,6 +76,11 @@ fn router(opts: Opts) -> Router {
         .route("/down", get(down))
         .route("/up", post(up))
         .route("/empty", get(empty))
+        .route("/__down", get(cf_down))
+        .route("/__up", post(up))
+        .route("/backend/garbage.php", get(garbage))
+        .route("/backend/empty.php", get(empty).post(up))
+        .route("/servers.json", get(servers_json))
         .with_state(opts)
 }
 
@@ -129,4 +138,36 @@ async fn empty(State(opts): State<Opts>) -> Response {
         return resp;
     }
     StatusCode::OK.into_response()
+}
+
+async fn cf_down(State(opts): State<Opts>, Query(q): Query<DownQuery>) -> Response {
+    let mut resp = down(State(opts), Query(q)).await;
+    resp.headers_mut()
+        .insert("cf-meta-colo", "POA".parse().expect("header value"));
+    resp
+}
+
+#[derive(Deserialize)]
+struct GarbageQuery {
+    #[serde(rename = "ckSize")]
+    ck_size: u64,
+}
+
+async fn garbage(State(opts): State<Opts>, Query(q): Query<GarbageQuery>) -> Response {
+    down(
+        State(opts),
+        Query(DownQuery {
+            bytes: q.ck_size * CHUNK as u64,
+        }),
+    )
+    .await
+}
+
+/// The public LibreSpeed list shape, including escaped slashes.
+async fn servers_json() -> Response {
+    let body = r#"[
+{"id":1,"name":"Alpha, Brazil","server":"\/\/alpha.example.com\/","dlURL":"garbage.php","ulURL":"empty.php","pingURL":"empty.php","getIpURL":"getIP.php","sponsorName":"A","sponsorURL":"https:\/\/a.example","pingURL2":"x"},
+{"id":2,"name":"Beta, Chile","server":"https:\/\/beta.example.com\/","dlURL":"garbage.php","ulURL":"empty.php","pingURL":"empty.php","getIpURL":"getIP.php"}
+]"#;
+    ([("content-type", "application/json")], body).into_response()
 }

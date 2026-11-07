@@ -19,12 +19,20 @@ use rusqlite::OptionalExtension;
 
 /// Applies pending migrations, tracking progress in `meta.schema_version`.
 pub fn run(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
-    conn.execute_batch("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    )?;
     let stored: Option<String> = conn
-        .query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0))
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |r| r.get(0),
+        )
         .optional()?;
     let current: usize = match stored {
-        Some(v) => v.parse().map_err(|_| anyhow::anyhow!("invalid meta.schema_version: {v:?}"))?,
+        Some(v) => v
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid meta.schema_version: {v:?}"))?,
         None => 0,
     };
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(current) {
