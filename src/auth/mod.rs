@@ -37,12 +37,16 @@ const FAILED_AUTH_DELAY: std::time::Duration = std::time::Duration::from_millis(
 
 /// Argon2 on the blocking pool, at most 2 at once; failures wait to slow brute force.
 pub async fn verify_password_async(password: String, hash: String) -> bool {
-    let Ok(_permit) = ARGON_PERMITS.acquire().await else {
+    let Ok(permit) = ARGON_PERMITS.acquire().await else {
         return false;
     };
-    let ok = tokio::task::spawn_blocking(move || verify_password(&password, &hash))
-        .await
-        .unwrap_or(false);
+    // Permit moves into the closure: held exactly while Argon2 runs, even if the caller is dropped.
+    let ok = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        verify_password(&password, &hash)
+    })
+    .await
+    .unwrap_or(false);
     if !ok {
         tokio::time::sleep(FAILED_AUTH_DELAY).await;
     }
@@ -150,37 +154,34 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
         return next.run(req).await;
     }
 
-    let mut token = req
+    let cookie_token = req
         .headers()
         .get(header::COOKIE)
         .and_then(|h| h.to_str().ok())
         .and_then(extract_token_from_cookie);
+    let bearer_token = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(extract_token_from_bearer);
 
-    // Only a Bearer token may be the raw password; a stale cookie must not cost Argon2.
-    let mut from_bearer = false;
-    if token.is_none() {
-        from_bearer = true;
-        token = req
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok())
-            .and_then(extract_token_from_bearer);
-    }
-
-    let mut authenticated = match &token {
+    let mut authenticated = match &cookie_token {
         Some(t) => validate_session(&state.db, t).await.unwrap_or(false),
         None => false,
     };
 
-    if !authenticated
-        && from_bearer
-        && let Some(t) = &token
-        && let Ok(cfg) = config::load(&state.db).await
-        && cfg.password_mode != PasswordMode::None
-        && verify_password_async(t.clone(), cfg.password_hash.clone()).await
-    {
-        authenticated = true;
+    // Bearer is checked even when a cookie is present (older primaries send both).
+    // Only a Bearer token may be the raw password; a stale cookie must not cost Argon2.
+    if !authenticated && let Some(t) = &bearer_token {
+        authenticated = validate_session(&state.db, t).await.unwrap_or(false);
+        if !authenticated
+            && let Ok(cfg) = config::load(&state.db).await
+            && cfg.password_mode != PasswordMode::None
+        {
+            authenticated = verify_password_async(t.clone(), cfg.password_hash.clone()).await;
+        }
     }
+    let token = cookie_token.or(bearer_token);
 
     req.extensions_mut().insert(AuthContext {
         authenticated,

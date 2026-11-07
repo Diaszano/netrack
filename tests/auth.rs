@@ -614,3 +614,43 @@ async fn expired_cookie_is_rejected_fast() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(start.elapsed() < std::time::Duration::from_millis(200));
 }
+
+#[tokio::test]
+async fn bearer_session_token_is_fast() {
+    let app = TestApp::new().await;
+    protect(&app).await;
+    let (_, _, json) = app
+        .request(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "password": "password123" })),
+            None,
+            None,
+        )
+        .await;
+    let auth = format!("Bearer {}", json["token"].as_str().unwrap());
+    let start = std::time::Instant::now();
+    for _ in 0..20 {
+        let (status, _, _) = app
+            .request(Method::GET, "/api/speedtests", None, None, Some(&auth))
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn cookie_and_bearer_password_from_old_primary_is_accepted() {
+    let app = TestApp::new().await;
+    protect(&app).await;
+    let (status, _, _) = app
+        .request(
+            Method::GET,
+            "/api/speedtests",
+            None,
+            Some("netrack_session=password123"),
+            Some("Bearer password123"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}
