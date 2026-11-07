@@ -13,8 +13,6 @@ use super::{
 use crate::net::http_client;
 
 pub const DEFAULT_LIST_URL: &str = "https://librespeed.org/backend-servers/servers.php";
-/// Candidates considered by [`pick_libre_server`].
-const PICK_CANDIDATES: usize = 10;
 const PICK_TIMEOUT: Duration = Duration::from_secs(2);
 const LIST_TIMEOUT: Duration = Duration::from_secs(5);
 const DOWNLOAD_CK_SIZE: u32 = 100;
@@ -41,6 +39,19 @@ impl LibreServer {
             format!("https:{s}")
         } else {
             s.to_string()
+        }
+    }
+
+    /// The server's host (with port when explicit), e.g. `alpha.example.com`.
+    /// Falls back to the raw `server` string if it does not parse as a URL.
+    pub fn host(&self) -> String {
+        let Ok(url) = reqwest::Url::parse(&self.base()) else {
+            return self.server.clone();
+        };
+        match (url.host_str(), url.port()) {
+            (Some(host), Some(port)) => format!("{host}:{port}"),
+            (Some(host), None) => host.to_owned(),
+            (None, _) => self.server.clone(),
         }
     }
 
@@ -78,13 +89,13 @@ pub async fn fetch_libre_servers(
     serde_json::from_slice(&bytes).map_err(net_err)
 }
 
-/// The lowest-latency reachable server among the first [`PICK_CANDIDATES`],
-/// measured with a single ping request each.
+/// The lowest-latency reachable server of the whole list, measured with a
+/// single ping request each, all probed concurrently.
 pub async fn pick_libre_server(
     client: &reqwest::Client,
     servers: &[LibreServer],
 ) -> Result<LibreServer, ProviderError> {
-    let probes = servers.iter().take(PICK_CANDIDATES).map(|s| async move {
+    let probes = servers.iter().map(|s| async move {
         let started = std::time::Instant::now();
         let url = format!("{}?r={}", s.url(&s.ping_url), rand::random::<u32>());
         timed_get(client, &url, PICK_TIMEOUT)
@@ -148,7 +159,8 @@ impl LibreSpeed {
             download_url: format!("{}?ckSize={DOWNLOAD_CK_SIZE}", server.url(&server.dl_url)),
             upload_url: server.url(&server.ul_url),
         };
-        let (stats, download, upload, _) = measure_all(&client, opts, ep).await?;
+        let (stats, download, upload) = measure_all(&client, opts, ep).await?;
+        let host = server.host();
         Ok(Measurement {
             ping: stats.ping,
             jitter: stats.jitter,
@@ -156,7 +168,7 @@ impl LibreSpeed {
             upload,
             server_id: Some(server.id.to_string()),
             server_name: Some(server.name),
-            server_host: Some(server.server),
+            server_host: Some(host),
             result_id: None,
         })
     }

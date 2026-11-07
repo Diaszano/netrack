@@ -5,8 +5,10 @@
 //! - `POST /up` — drains and discards the request body.
 //! - `GET /empty` — empty 200 response.
 //!
-//! Cloudflare-shaped: `GET /__down?bytes=N` (header `cf-meta-colo: POA`) and
-//! `POST /__up`. LibreSpeed-shaped: `GET /backend/garbage.php?ckSize=N` (N MiB),
+//! Cloudflare-shaped: `GET /__down?bytes=N` (for N=0 the response is delayed
+//! by [`CF_SERVER_DELAY_MS`] and reports it in `server-timing`), `POST /__up`
+//! and `GET /cdn-cgi/trace` (`colo=POA`).
+//! LibreSpeed-shaped: `GET /backend/garbage.php?ckSize=N` (N MiB),
 //! `GET|POST /backend/empty.php`, and `GET /servers.json` (public list shape).
 //!
 //! New routes go in [`router`]; new knobs go in [`MockOptions`].
@@ -26,6 +28,8 @@ use serde::Deserialize;
 use tokio::task::JoinHandle;
 
 const CHUNK: usize = 1024 * 1024;
+/// Simulated server-side processing time of a Cloudflare `bytes=0` request.
+pub const CF_SERVER_DELAY_MS: u64 = 80;
 static ZEROS: [u8; CHUNK] = [0; CHUNK];
 
 /// Behaviour knobs for the mock server.
@@ -78,6 +82,7 @@ fn router(opts: Opts) -> Router {
         .route("/empty", get(empty))
         .route("/__down", get(cf_down))
         .route("/__up", post(up))
+        .route("/cdn-cgi/trace", get(cf_trace))
         .route("/backend/garbage.php", get(garbage))
         .route("/backend/empty.php", get(empty).post(up))
         .route("/servers.json", get(servers_json))
@@ -141,10 +146,27 @@ async fn empty(State(opts): State<Opts>) -> Response {
 }
 
 async fn cf_down(State(opts): State<Opts>, Query(q): Query<DownQuery>) -> Response {
+    let probe = q.bytes == 0;
+    if probe {
+        tokio::time::sleep(std::time::Duration::from_millis(CF_SERVER_DELAY_MS)).await;
+    }
     let mut resp = down(State(opts), Query(q)).await;
-    resp.headers_mut()
-        .insert("cf-meta-colo", "POA".parse().expect("header value"));
+    if probe {
+        resp.headers_mut().insert(
+            "server-timing",
+            format!("cfSpeedWorker;dur={CF_SERVER_DELAY_MS}")
+                .parse()
+                .expect("header value"),
+        );
+    }
     resp
+}
+
+async fn cf_trace(State(opts): State<Opts>) -> Response {
+    if let Some(resp) = failure(&opts) {
+        return resp;
+    }
+    "fl=1\nh=x\ncolo=POA\n".into_response()
 }
 
 #[derive(Deserialize)]

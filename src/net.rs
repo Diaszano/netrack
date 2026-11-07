@@ -43,11 +43,13 @@ pub fn resolve_local_addr(iface: Option<&str>) -> Option<IpAddr> {
         .copied()
 }
 
-/// HTTP client bound to `local_addr` when given. Only a connect timeout is
-/// set; the throughput engine owns overall timing.
+/// HTTP/1.1 client bound to `local_addr` when given. HTTP/1.1 only, so every
+/// parallel stream is its own TCP connection. Only a connect timeout is set;
+/// the throughput engine owns overall timing.
 pub fn http_client(local_addr: Option<IpAddr>) -> reqwest::Client {
     reqwest::Client::builder()
         .use_rustls_tls()
+        .http1_only()
         .local_address(local_addr)
         .tcp_nodelay(true)
         .connect_timeout(CONNECT_TIMEOUT)

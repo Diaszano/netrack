@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 use netrack::measure::ThroughputConfig;
 use netrack::net::resolve_local_addr;
 use netrack::providers::librespeed::{
-    LibreSource, LibreSpeed, custom_libre_server, fetch_libre_servers,
+    LibreServer, LibreSource, LibreSpeed, custom_libre_server, fetch_libre_servers,
+    pick_libre_server,
 };
 use netrack::providers::{Cloudflare, ProviderError, RunOptions, SpeedProvider};
 use support::spawn_mock;
@@ -29,7 +30,11 @@ async fn cloudflare_run_against_mock() {
         .await
         .expect("run");
     assert!(m.download > 0.0 && m.upload > 0.0 && m.ping >= 0.0 && m.jitter >= 0.0);
+    // The mock holds each probe for 80 ms of reported server time; ping must
+    // exclude it, as speed.cloudflare.com does.
+    assert!(m.ping < 40.0, "ping includes server time: {} ms", m.ping);
     assert_eq!(m.server_name.as_deref(), Some("Cloudflare · POA"));
+    assert_eq!(m.server_id.as_deref(), Some("POA"));
     assert_eq!(m.server_host.as_deref(), Some("speed.cloudflare.com"));
 }
 
@@ -42,9 +47,45 @@ async fn librespeed_run_against_mock() {
         .await
         .expect("run");
     assert!(m.download > 0.0 && m.upload > 0.0 && m.ping >= 0.0);
+    let host = mock.base_url.trim_start_matches("http://");
+    assert_eq!(m.server_host.as_deref(), Some(host));
+}
+
+fn libre(id: u32, server: &str) -> LibreServer {
+    LibreServer {
+        id,
+        name: format!("server {id}"),
+        server: server.to_string(),
+        dl_url: "garbage.php".into(),
+        ul_url: "empty.php".into(),
+        ping_url: "empty.php".into(),
+    }
+}
+
+#[tokio::test]
+async fn pick_libre_server_considers_whole_list() {
+    let mock = spawn_mock().await;
+    // Eleven unreachable servers first; the only reachable one is last.
+    let mut list: Vec<LibreServer> = (1..=11)
+        .map(|id| libre(id, "http://127.0.0.1:1/"))
+        .collect();
+    list.push(libre(12, &format!("{}/backend/", mock.base_url)));
+    let picked = pick_libre_server(&reqwest::Client::new(), &list)
+        .await
+        .expect("reachable server");
+    assert_eq!(picked.id, 12);
+}
+
+#[test]
+fn libre_server_host_is_normalized() {
+    assert_eq!(libre(1, "//alpha.example.com/").host(), "alpha.example.com");
     assert_eq!(
-        m.server_host.as_deref(),
-        Some(format!("{}/backend/", mock.base_url).as_str())
+        libre(2, "https://beta.example.com/speed/").host(),
+        "beta.example.com"
+    );
+    assert_eq!(
+        libre(3, "http://127.0.0.1:8080/backend/").host(),
+        "127.0.0.1:8080"
     );
 }
 

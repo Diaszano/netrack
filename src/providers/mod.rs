@@ -25,7 +25,7 @@ pub use librespeed::{LibreServer, LibreSource, LibreSpeed};
 /// Hard bound on one whole provider run.
 const RUN_TIMEOUT: Duration = Duration::from_secs(60);
 /// Bound on each latency probe request.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// Sequential latency samples taken after the warm-up request.
 const LATENCY_SAMPLES: usize = 20;
 /// Bytes per upload request; the engine re-invokes the factory as needed.
@@ -95,42 +95,81 @@ pub(crate) async fn with_run_timeout<T>(
         .unwrap_or_else(|_| Err(ProviderError::Network("timeout".into())))
 }
 
-/// One bounded GET, returning the response headers once the body is read.
+/// One bounded GET whose body is read to the end (so the connection is reused).
 pub(crate) async fn timed_get(
     client: &reqwest::Client,
     url: &str,
     timeout: Duration,
-) -> Result<HeaderMap, ProviderError> {
-    let resp = client
+) -> Result<(), ProviderError> {
+    get_ok(client, url, timeout)
+        .await?
+        .bytes()
+        .await
+        .map_err(net_err)?;
+    Ok(())
+}
+
+async fn get_ok(
+    client: &reqwest::Client,
+    url: &str,
+    timeout: Duration,
+) -> Result<reqwest::Response, ProviderError> {
+    client
         .get(url)
         .timeout(timeout)
         .send()
         .await
         .and_then(|r| r.error_for_status())
-        .map_err(net_err)?;
-    let headers = resp.headers().clone();
+        .map_err(net_err)
+}
+
+/// Server processing time in ms from a `Server-Timing` header: the first
+/// `dur=` parameter across all entries and header lines, as the official
+/// Cloudflare speed test does.
+pub(crate) fn server_timing_ms(headers: &HeaderMap) -> Option<f64> {
+    headers
+        .get_all("server-timing")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .flat_map(|entry| entry.split(';').skip(1))
+        .find_map(|param| {
+            param
+                .trim()
+                .strip_prefix("dur=")?
+                .trim_matches('"')
+                .parse::<f64>()
+                .ok()
+        })
+}
+
+/// One latency sample: time to response headers minus the server time the
+/// response reports, so only network round trip remains.
+async fn latency_sample(client: &reqwest::Client, url: &str) -> Result<f64, ProviderError> {
+    let started = Instant::now();
+    let resp = get_ok(client, url, PROBE_TIMEOUT).await?;
+    let ttfb_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let server_ms = server_timing_ms(resp.headers()).unwrap_or(0.0);
     resp.bytes().await.map_err(net_err)?;
-    Ok(headers)
+    Ok((ttfb_ms - server_ms).max(0.01))
 }
 
 /// Probes latency: one warm-up request, then [`LATENCY_SAMPLES`] sequential
-/// ones on the same connection. Returns the stats and the warm-up response
-/// headers. A failed warm-up fails the run; failed samples are skipped.
+/// ones on the same connection. A failed warm-up fails the run; failed
+/// samples are skipped.
 pub(crate) async fn probe_latency(
     client: &reqwest::Client,
     url: impl Fn() -> String,
-) -> Result<(LatencyStats, HeaderMap), ProviderError> {
-    let headers = timed_get(client, &url(), PROBE_TIMEOUT).await?;
+) -> Result<LatencyStats, ProviderError> {
+    timed_get(client, &url(), PROBE_TIMEOUT).await?;
     let mut samples = Vec::with_capacity(LATENCY_SAMPLES);
     for _ in 0..LATENCY_SAMPLES {
-        let started = Instant::now();
-        if timed_get(client, &url(), PROBE_TIMEOUT).await.is_ok() {
-            samples.push(started.elapsed().as_secs_f64() * 1000.0);
+        if let Ok(ms) = latency_sample(client, &url()).await {
+            samples.push(ms);
         }
     }
-    let stats = latency_stats(&samples)
-        .ok_or_else(|| ProviderError::Network("not enough latency samples".into()))?;
-    Ok((stats, headers))
+    latency_stats(&samples)
+        .ok_or_else(|| ProviderError::Network("not enough latency samples".into()))
 }
 
 fn download_factory(client: &reqwest::Client, url: String) -> StreamFactory {
@@ -174,17 +213,51 @@ pub(crate) struct Endpoints {
     pub upload_url: String,
 }
 
-/// Latency, then download, then upload. Returns the stats, download and
-/// upload Mbps, and the latency warm-up response headers.
+/// Latency, then download, then upload. Returns the stats and the download
+/// and upload Mbps.
 pub(crate) async fn measure_all(
     client: &reqwest::Client,
     opts: &RunOptions,
     ep: Endpoints,
-) -> Result<(LatencyStats, f64, f64, HeaderMap), ProviderError> {
-    let (stats, headers) = probe_latency(client, ep.latency_url).await?;
+) -> Result<(LatencyStats, f64, f64), ProviderError> {
+    let stats = probe_latency(client, ep.latency_url).await?;
     let download =
         measure_throughput(&opts.throughput, download_factory(client, ep.download_url)).await?;
     let upload =
         measure_throughput(&opts.throughput, upload_factory(client, ep.upload_url)).await?;
-    Ok((stats, download, upload, headers))
+    Ok((stats, download, upload))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::HeaderValue;
+
+    fn headers(values: &[&str]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for v in values {
+            h.append("server-timing", HeaderValue::from_str(v).unwrap());
+        }
+        h
+    }
+
+    #[test]
+    fn server_timing_missing_header_is_none() {
+        assert_eq!(server_timing_ms(&HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn server_timing_takes_first_dur_across_entries() {
+        let h = headers(&["cfSpeedEdge;dur=8, cfSpeedWorker;dur=29"]);
+        assert_eq!(server_timing_ms(&h), Some(8.0));
+        let h = headers(&["cfRequestDuration;dur=12.5"]);
+        assert_eq!(server_timing_ms(&h), Some(12.5));
+    }
+
+    #[test]
+    fn server_timing_skips_entries_without_dur_and_spans_header_lines() {
+        let h = headers(&["cfL4;desc=\"?proto=TCP\"", "cfSpeedWorker;desc=x;dur=29"]);
+        assert_eq!(server_timing_ms(&h), Some(29.0));
+        assert_eq!(server_timing_ms(&headers(&["miss, db;desc=x"])), None);
+    }
 }
