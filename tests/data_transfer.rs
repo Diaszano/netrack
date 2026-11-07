@@ -542,3 +542,31 @@ async fn test_reset_auth_protection() {
         .await;
     assert_eq!(status, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_import_larger_than_default_body_limit() {
+    let app = TestApp::new().await;
+    let records: Vec<Value> = (0..10_000i64)
+        .map(|i| {
+            json!({
+                "createdAt": 1_700_000_000_000i64 + i * 3_600_000,
+                "kind": "auto",
+                "provider": "librespeed",
+                "download": 100.0,
+                "upload": 50.0,
+                "ping": 10.0,
+                "jitter": 1.0,
+                "serverName": "x".repeat(200),
+            })
+        })
+        .collect();
+    let body = serde_json::to_string(&records).unwrap();
+    assert!(body.len() > 2 * 1024 * 1024);
+
+    let (status, _, resp) = app
+        .post("/api/data/import", body, Some("application/json"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let resp: Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(resp, json!({ "imported": 10000 }));
+}
