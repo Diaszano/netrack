@@ -183,7 +183,10 @@ fn validate(key: &str, v: &str) -> Result<(), ConfigError> {
         "libre_server_id" => parse_server_id(key, v).map(|_| ()),
         "libre_url" => parse_url(key, v).map(|_| ()),
         "interface" => Ok(()),
-        "password_mode" => parse_password_mode(key, v).map(|_| ()),
+        "password_mode" => Err(invalid(
+            key,
+            "cannot set password_mode directly; use /api/auth/password",
+        )),
         "password_hash" => Err(invalid(
             key,
             "cannot set password_hash directly; use /api/auth/password",

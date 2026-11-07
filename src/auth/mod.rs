@@ -129,6 +129,10 @@ pub fn extract_token_from_bearer(auth_header: &str) -> Option<String> {
 }
 
 pub async fn middleware(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
+    if !req.uri().path().starts_with("/api/") {
+        return next.run(req).await;
+    }
+
     let mut token = req
         .headers()
         .get(header::COOKIE)
@@ -154,11 +158,6 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
     });
 
     let path = req.uri().path();
-    // Non-API routes are exempt (e.g. /healthz, /, static assets)
-    if !path.starts_with("/api/") {
-        return next.run(req).await;
-    }
-
     // Specific API route exemptions
     if path == "/api/auth/login" || path == "/api/auth/status" {
         return next.run(req).await;

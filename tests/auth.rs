@@ -107,6 +107,27 @@ async fn auth_status_default_is_none() {
 }
 
 #[tokio::test]
+async fn direct_password_mode_patch_is_rejected() {
+    let app = TestApp::new().await;
+    let (status, _, json) = app
+        .request(
+            Method::PATCH,
+            "/api/config/password_mode",
+            Some(json!({ "value": "protected" })),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("cannot set password_mode directly")
+    );
+}
+
+#[tokio::test]
 async fn set_password_and_public_mode_enforcement() {
     let app = TestApp::new().await;
 
