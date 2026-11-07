@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use futures::FutureExt;
 use futures::future::{BoxFuture, join_all};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{
     Endpoints, Measurement, ProviderError, RunOptions, SpeedProvider, measure_all, net_err,
@@ -19,7 +19,7 @@ const PICK_TIMEOUT: Duration = Duration::from_secs(2);
 const LIST_TIMEOUT: Duration = Duration::from_secs(5);
 const DOWNLOAD_CK_SIZE: u32 = 100;
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct LibreServer {
     pub id: u32,
     pub name: String,
