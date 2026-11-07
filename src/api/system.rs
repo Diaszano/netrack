@@ -29,8 +29,13 @@ pub(super) fn routes() -> Router<AppState> {
 
 async fn status(State(s): State<AppState>) -> Json<Value> {
     let stats = process_stats();
+    let version_info = s.version_checker.check().await;
     Json(json!({
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": version_info.current_version,
+        "latest_version": version_info.latest_version,
+        "update_available": version_info.update_available,
+        "preview_mode": s.preview_mode,
+        "preview_message": s.preview_message,
         "uptimeSecs": s.started_at.elapsed().as_secs(),
         "cpuPercent": stats.cpu_percent,
         "rssBytes": stats.rss_bytes,

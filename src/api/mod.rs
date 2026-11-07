@@ -42,6 +42,9 @@ pub struct AppState {
     pub(crate) libre_cache: LibreCache,
     pub data_dir: PathBuf,
     pub ookla_download_url: Option<String>,
+    pub preview_mode: bool,
+    pub preview_message: Option<String>,
+    pub version_checker: Arc<crate::version::VersionChecker>,
 }
 
 impl AppState {
@@ -64,6 +67,9 @@ impl AppState {
             libre_cache: Arc::default(),
             data_dir,
             ookla_download_url: None,
+            preview_mode: false,
+            preview_message: None,
+            version_checker: Arc::new(crate::version::VersionChecker::default()),
         }
     }
 
@@ -74,6 +80,27 @@ impl AppState {
 
     pub fn with_ookla_download_url(mut self, url: impl Into<String>) -> Self {
         self.ookla_download_url = Some(url.into());
+        self
+    }
+
+    pub fn with_preview(mut self, enabled: bool, message: Option<String>) -> Self {
+        self.preview_mode = enabled;
+        self.preview_message = if enabled && message.is_none() {
+            Some(crate::settings::DEFAULT_PREVIEW_MESSAGE.to_string())
+        } else {
+            message
+        };
+        self
+    }
+
+    pub fn with_release_url(mut self, url: impl Into<String>) -> Self {
+        self.version_checker =
+            Arc::new(self.version_checker.as_ref().clone().with_release_url(url));
+        self
+    }
+
+    pub fn with_version_checker(mut self, checker: Arc<crate::version::VersionChecker>) -> Self {
+        self.version_checker = checker;
         self
     }
 
@@ -91,6 +118,30 @@ impl AppState {
     }
 }
 
+pub async fn preview_middleware(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if state.preview_mode && req.uri().path().starts_with("/api/") {
+        let method = req.method();
+        let path = req.uri().path();
+        let is_read_only = matches!(
+            *method,
+            axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+        );
+        let is_auth_allowed = path == "/api/auth/login" || path == "/api/auth/logout";
+        if !is_read_only && !is_auth_allowed {
+            let msg = state
+                .preview_message
+                .as_deref()
+                .unwrap_or(crate::settings::DEFAULT_PREVIEW_MESSAGE);
+            return (StatusCode::FORBIDDEN, Json(json!({ "error": msg }))).into_response();
+        }
+    }
+    next.run(req).await
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
@@ -102,11 +153,16 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::prometheus::routes())
         .merge(crate::data_transfer::routes::routes())
         .merge(crate::nodes::routes::routes())
+        .merge(crate::opengraph::routes())
         .fallback(crate::web::serve)
         .method_not_allowed_fallback(method_not_allowed)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::auth::middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            preview_middleware,
         ))
         .with_state(state)
 }

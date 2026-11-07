@@ -3,12 +3,17 @@ use std::{collections::HashMap, path::PathBuf};
 use anyhow::{Context, anyhow};
 use chrono_tz::Tz;
 
+pub const DEFAULT_PREVIEW_MESSAGE: &str =
+    "Demonstração ativa. Modificações estão desabilitadas.";
+
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub port: u16,
     pub data_dir: PathBuf,
     pub tz: Tz,
     pub run_on_startup: bool,
+    pub preview_mode: bool,
+    pub preview_message: Option<String>,
 }
 
 impl Settings {
@@ -41,11 +46,31 @@ impl Settings {
             },
             None => false,
         };
+        let preview_mode = match vars.get("PREVIEW_MODE") {
+            Some(v) => match v.trim().to_ascii_lowercase().as_str() {
+                "true" | "1" => true,
+                "false" | "0" | "" => false,
+                _ => return Err(anyhow!("invalid PREVIEW_MODE: {v:?}")),
+            },
+            None => false,
+        };
+        let preview_message = if preview_mode {
+            let msg = vars
+                .get("PREVIEW_MESSAGE")
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| DEFAULT_PREVIEW_MESSAGE.to_string());
+            Some(msg)
+        } else {
+            None
+        };
         Ok(Self {
             port,
             data_dir,
             tz,
             run_on_startup,
+            preview_mode,
+            preview_message,
         })
     }
 }
