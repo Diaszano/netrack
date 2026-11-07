@@ -46,12 +46,17 @@ struct TestApp {
 
 impl TestApp {
     async fn new() -> Self {
+        Self::with_trust_proxy(false).await
+    }
+
+    async fn with_trust_proxy(trust: bool) -> Self {
         let db = Db::open_in_memory(chrono_tz::Tz::UTC).await.unwrap();
         let factory: ProviderFactory = Arc::new(|_| Box::new(DummyProvider));
         let runner = Runner::new(db.clone(), factory);
         let (tx, rx) = watch::channel(());
         let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx);
-        let state = AppState::new(db.clone(), runner, tx, Arc::new(scheduler));
+        let state =
+            AppState::new(db.clone(), runner, tx, Arc::new(scheduler)).with_trust_proxy(trust);
         let app = router(state);
         Self { app, db }
     }
@@ -680,4 +685,85 @@ async fn delete_expired_sessions_removes_only_expired() {
         .await
         .unwrap();
     assert_eq!(left, 1);
+}
+
+async fn set_protected(app: &TestApp) {
+    let (status, _, _) = app
+        .request(
+            Method::POST,
+            "/api/auth/password",
+            Some(json!({ "password": "mypassword123", "mode": "protected" })),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+async fn login_from(app: &TestApp, password: &str, xff: Option<&str>) -> (StatusCode, bool) {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/auth/login")
+        .header("content-type", "application/json");
+    if let Some(x) = xff {
+        req = req.header("x-forwarded-for", x);
+    }
+    let res = app
+        .app
+        .clone()
+        .oneshot(
+            req.body(Body::from(json!({ "password": password }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    (res.status(), res.headers().contains_key("retry-after"))
+}
+
+#[tokio::test]
+async fn login_locks_out_after_five_failures() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    for _ in 0..5 {
+        assert_eq!(
+            login_from(&app, "wrong", None).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    // Even the right password is refused while locked out.
+    let (status, retry_after) = login_from(&app, "mypassword123", None).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(retry_after);
+}
+
+#[tokio::test]
+async fn spoofed_forwarded_for_does_not_bypass_lockout_without_trust_proxy() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    for i in 0..5 {
+        let xff = format!("10.0.0.{i}");
+        assert_eq!(
+            login_from(&app, "wrong", Some(&xff)).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let (status, _) = login_from(&app, "mypassword123", Some("10.9.9.9")).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn forwarded_for_separates_clients_with_trust_proxy() {
+    let app = TestApp::with_trust_proxy(true).await;
+    set_protected(&app).await;
+    for _ in 0..5 {
+        login_from(&app, "wrong", Some("10.0.0.1")).await;
+    }
+    assert_eq!(
+        login_from(&app, "mypassword123", Some("10.0.0.1")).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        login_from(&app, "mypassword123", Some("10.0.0.2")).await.0,
+        StatusCode::OK
+    );
 }

@@ -67,7 +67,8 @@ async fn main() -> anyhow::Result<()> {
     // `state` (and its reload sender) lives until the servers have stopped.
     let state = AppState::new(db, runner, reload_tx, scheduler)
         .with_data_dir(settings.data_dir)
-        .with_preview(settings.preview_mode, settings.preview_message);
+        .with_preview(settings.preview_mode, settings.preview_message)
+        .with_trust_proxy(settings.trust_proxy);
     let stop_state = state.clone();
     let stop_rx = state.shutdown.subscribe();
     let app = router(state);
@@ -97,11 +98,14 @@ async fn main() -> anyhow::Result<()> {
         let app = app.clone();
         let mut stop = stop_rx.clone();
         async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = stop.wait_for(|s| *s).await;
-                })
-                .await
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                let _ = stop.wait_for(|s| *s).await;
+            })
+            .await
         }
     };
     match v6 {

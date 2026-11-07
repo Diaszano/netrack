@@ -43,6 +43,7 @@ O container roda como UID 65534 (`nobody`). O diretório montado em `/data` prec
 |---|---|---|
 | `NETRACK_PORT` | `5216` | Porta HTTP (escuta em `0.0.0.0` e `[::]`) |
 | `NETRACK_DATA_DIR` | `/data` | Diretório do banco SQLite e binário opcional do Ookla |
+| `NETRACK_TRUST_PROXY` | `false` | Usa o primeiro IP de `X-Forwarded-For` como IP do cliente no bloqueio de login (5 falhas em 15 min). Ative só atrás de um proxy reverso confiável |
 | `TZ` | `UTC` | Fuso horário usado no agendamento e estatísticas (ex.: `America/Sao_Paulo`); vazio = `UTC` |
 | `RUN_TEST_ON_STARTUP` | `false` | Executa um teste imediatamente ao iniciar |
 | `PREVIEW_MODE` | `false` | Modo demonstração: bloqueia mutações (`403 Forbidden`) e exibe aviso na UI |

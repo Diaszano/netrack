@@ -1,3 +1,4 @@
+pub mod lockout;
 pub mod routes;
 
 use argon2::Argon2;

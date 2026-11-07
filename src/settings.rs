@@ -12,6 +12,7 @@ pub struct Settings {
     pub tz: Tz,
     pub run_on_startup: bool,
     pub preview_mode: bool,
+    pub trust_proxy: bool,
     pub preview_message: Option<String>,
 }
 
@@ -53,6 +54,14 @@ impl Settings {
             },
             None => false,
         };
+        let trust_proxy = match vars.get("NETRACK_TRUST_PROXY") {
+            Some(v) => match v.trim().to_ascii_lowercase().as_str() {
+                "true" | "1" => true,
+                "false" | "0" | "" => false,
+                _ => return Err(anyhow!("invalid NETRACK_TRUST_PROXY: {v:?}")),
+            },
+            None => false,
+        };
         let preview_message = if preview_mode {
             let msg = vars
                 .get("PREVIEW_MESSAGE")
@@ -69,6 +78,7 @@ impl Settings {
             tz,
             run_on_startup,
             preview_mode,
+            trust_proxy,
             preview_message,
         })
     }

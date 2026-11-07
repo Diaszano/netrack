@@ -47,6 +47,9 @@ pub struct AppState {
     pub version_checker: Arc<crate::version::VersionChecker>,
     /// Shared outbound client. No total timeout: the node proxy carries SSE.
     pub http: reqwest::Client,
+    pub login_lockout: Arc<crate::auth::lockout::Lockout>,
+    /// Honor `X-Forwarded-For` for the client IP (only safe behind a reverse proxy).
+    pub trust_proxy: bool,
 }
 
 impl AppState {
@@ -76,6 +79,8 @@ impl AppState {
                 .connect_timeout(std::time::Duration::from_secs(5))
                 .build()
                 .expect("static reqwest client configuration is valid"),
+            login_lockout: Arc::default(),
+            trust_proxy: false,
         }
     }
 
@@ -96,6 +101,11 @@ impl AppState {
         } else {
             message
         };
+        self
+    }
+
+    pub fn with_trust_proxy(mut self, trust: bool) -> Self {
+        self.trust_proxy = trust;
         self
     }
 

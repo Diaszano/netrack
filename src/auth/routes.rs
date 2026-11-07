@@ -1,4 +1,7 @@
-use axum::extract::{Extension, State};
+use std::net::{IpAddr, SocketAddr};
+use std::time::Instant;
+
+use axum::extract::{ConnectInfo, Extension, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -50,15 +53,45 @@ pub struct LoginResponse {
     pub expires_at: i64,
 }
 
+/// `X-Forwarded-For` is client-controlled, so it only counts behind a trusted proxy.
+fn client_ip(
+    s: &AppState,
+    headers: &HeaderMap,
+    conn: Option<Extension<ConnectInfo<SocketAddr>>>,
+) -> IpAddr {
+    let forwarded = s
+        .trust_proxy
+        .then(|| headers.get("x-forwarded-for")?.to_str().ok())
+        .flatten()
+        .and_then(|v| v.split(',').next()?.trim().parse().ok());
+    forwarded
+        .or(conn.map(|c| c.0.0.ip()))
+        .unwrap_or(IpAddr::from([0, 0, 0, 0]))
+}
+
 async fn login(
     State(s): State<AppState>,
+    headers: HeaderMap,
+    conn: Option<Extension<ConnectInfo<SocketAddr>>>,
     ApiJson(body): ApiJson<LoginRequest>,
 ) -> ApiResult<impl IntoResponse> {
+    let ip = client_ip(&s, &headers, conn);
+    if let Err(wait) = s.login_lockout.check(ip, Instant::now()) {
+        let secs = wait.as_secs().max(1);
+        return Ok((
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, secs.to_string())],
+            Json(serde_json::json!({ "error": "too many attempts" })),
+        )
+            .into_response());
+    }
     let cfg = config::load(&s.db).await?;
-    if cfg.password_mode != PasswordMode::None
-        && !verify_password_async(body.password.clone(), cfg.password_hash.clone()).await
-    {
-        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "invalid password"));
+    if cfg.password_mode != PasswordMode::None {
+        if !verify_password_async(body.password.clone(), cfg.password_hash.clone()).await {
+            s.login_lockout.fail(ip, Instant::now());
+            return Err(ApiError::new(StatusCode::UNAUTHORIZED, "invalid password"));
+        }
+        s.login_lockout.succeed(ip);
     }
 
     let (token, expires_at) = create_session(&s.db).await?;
@@ -72,7 +105,7 @@ async fn login(
         cookie_val.parse().map_err(|e| anyhow::anyhow!("{e}"))?,
     );
 
-    Ok((headers, Json(LoginResponse { token, expires_at })))
+    Ok((headers, Json(LoginResponse { token, expires_at })).into_response())
 }
 
 async fn logout(
