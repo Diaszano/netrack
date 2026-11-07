@@ -147,10 +147,19 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
             .and_then(extract_token_from_bearer);
     }
 
-    let authenticated = match &token {
+    let mut authenticated = match &token {
         Some(t) => validate_session(&state.db, t).await.unwrap_or(false),
         None => false,
     };
+
+    if !authenticated
+        && let Some(t) = &token
+        && let Ok(cfg) = config::load(&state.db).await
+        && cfg.password_mode != PasswordMode::None
+        && verify_password(t, &cfg.password_hash)
+    {
+        authenticated = true;
+    }
 
     req.extensions_mut().insert(AuthContext {
         authenticated,

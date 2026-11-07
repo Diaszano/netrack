@@ -5,6 +5,7 @@ pub mod db;
 pub mod integrations;
 pub mod measure;
 pub mod net;
+pub mod nodes;
 pub mod providers;
 pub mod prometheus;
 pub mod runner;

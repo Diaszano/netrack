@@ -33,6 +33,15 @@ CREATE TABLE integrations (
   enabled INTEGER NOT NULL DEFAULT 1
 );
 "#,
+    r#"
+CREATE TABLE nodes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  password TEXT,
+  created_at INTEGER NOT NULL
+);
+"#,
 ];
 
 use rusqlite::OptionalExtension;
