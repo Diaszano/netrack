@@ -974,14 +974,20 @@ function setupEventDelegation() {
         await apiClient.login(pwd);
         const authSt = await apiClient.getAuthStatus().catch(() => ({ mode: "protected", authenticated: true }));
         state.auth = { ...authSt, modalOpen: false, error: null };
-        const [sys, status, cfg] = await Promise.all([
+        const [sys, status, cfg, nodesList] = await Promise.all([
           apiClient.getSystemStatus().catch(() => null),
           apiClient.getStatus().catch(() => null),
           apiClient.getConfig().catch(() => null),
+          apiClient.listNodes().catch(() => []),
         ]);
         if (sys) state.system = sys;
         if (status) state.status = status;
         if (cfg) state.config = cfg;
+        if (!state.nodes) {
+          state.nodes = { activeNodeId: null, items: Array.isArray(nodesList) ? nodesList : [], statuses: {}, editing: null };
+        } else {
+          state.nodes.items = Array.isArray(nodesList) ? nodesList : [];
+        }
         await loadViewData(state.route);
         render();
       } catch (err) {

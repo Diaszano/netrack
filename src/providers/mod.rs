@@ -72,6 +72,13 @@ pub trait SpeedProvider: Send + Sync {
 /// Builds the provider selected by `cfg`. HTTP clients are created per run
 /// from `RunOptions::local_addr`.
 pub fn build_provider(cfg: &AppConfig) -> Box<dyn SpeedProvider> {
+    let data_dir = std::env::var("NETRACK_DATA_DIR")
+        .map_or_else(|_| std::path::PathBuf::from("/data"), std::path::PathBuf::from);
+    build_provider_in(cfg, &data_dir)
+}
+
+/// Builds the provider selected by `cfg`, resolving binaries under `data_dir`.
+pub fn build_provider_in(cfg: &AppConfig, data_dir: &std::path::Path) -> Box<dyn SpeedProvider> {
     match cfg.provider {
         Provider::Cloudflare => Box::new(Cloudflare::new()),
         Provider::LibreSpeed => {
@@ -84,8 +91,6 @@ pub fn build_provider(cfg: &AppConfig) -> Box<dyn SpeedProvider> {
             Box::new(LibreSpeed::new(source))
         }
         Provider::Ookla => {
-            let data_dir = std::env::var("NETRACK_DATA_DIR")
-                .map_or_else(|_| std::path::PathBuf::from("/data"), std::path::PathBuf::from);
             let bin_path = data_dir.join("bin").join("speedtest");
             Box::new(ookla::Ookla::new(bin_path, cfg.ookla_server_id))
         }

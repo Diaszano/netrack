@@ -487,6 +487,20 @@ async fn test_transparent_proxy_get_and_post() {
     assert!(json.is_array());
     assert_eq!(json[0]["id"], 10);
 
+    // 1b. GET request with optional /api/ prefix in proxy subpath routes to /api/speedtests
+    let (status, _headers, json_api_prefix) = app
+        .request(
+            Method::GET,
+            &format!("/api/nodes/{id}/proxy/api/speedtests?limit=10"),
+            None,
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(json_api_prefix.is_array());
+    assert_eq!(json_api_prefix[0]["id"], 10);
+
     // 2. POST request proxied to /api/trigger with body
     let (status, _headers, json) = app
         .request(

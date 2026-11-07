@@ -121,6 +121,21 @@ test("settings_view_renders_password_card_prometheus_and_data_management", () =>
   assert.ok(html.includes("142"), "Must display database row count (142)");
   assert.ok(html.includes("5 MB"), "Must display formatted database size (5 MB)");
   assert.ok(html.includes('data-action="reset-data"'), "Must include reset database button");
+
+  // 4. Remote node export URL when state.nodes.activeNodeId is set
+  state.nodes = { ...state.nodes, activeNodeId: 2 };
+  const remoteHtml = renderSettings(state, {
+    t: tPt,
+    locales: [{ code: "pt-BR", name: "Português (Brasil)" }],
+  });
+  assert.ok(
+    remoteHtml.includes("/api/nodes/2/proxy/data/export?format=json"),
+    "Must use proxied export URL when activeNodeId = 2"
+  );
+  assert.ok(
+    remoteHtml.includes("/api/nodes/2/proxy/data/export?format=csv"),
+    "Must use proxied CSV export URL when activeNodeId = 2"
+  );
 });
 
 test("servers_view_renders_ookla_provider_consent_install_and_servers", () => {

@@ -230,6 +230,11 @@ export function renderSettings(state, { t = (k) => k, locales = [] } = {}) {
   // 5. Data Management Card (Export JSON/CSV, Import Netrack/MySpeed/CSV, Stats & Reset)
   const rowCount = state?.dataStats?.rowCount != null ? String(state.dataStats.rowCount) : "—";
   const dbSize = state?.dataStats?.dbSizeBytes != null ? formatBytes(state.dataStats.dbSizeBytes, locale) : "—";
+  const activeNodeId = state?.nodes?.activeNodeId;
+  const exportBase =
+    activeNodeId != null && activeNodeId !== "" && activeNodeId !== "local"
+      ? `/api/nodes/${encodeURIComponent(activeNodeId)}/proxy/data/export`
+      : "/api/data/export";
 
   const dataCardHtml = `<div class="card">
   <div class="card-header">
@@ -250,8 +255,8 @@ export function renderSettings(state, { t = (k) => k, locales = [] } = {}) {
   <div class="form-group">
     <div class="form-label">${escapeHtml(t("settings.exportTitle") || "Exportar histórico")}</div>
     <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px;">
-      <a href="/api/data/export?format=json" download class="btn btn-secondary" data-action="export-json">${escapeHtml(t("settings.exportJson") || "Exportar JSON")}</a>
-      <a href="/api/data/export?format=csv" download class="btn btn-secondary" data-action="export-csv">${escapeHtml(t("settings.exportCsv") || "Exportar CSV")}</a>
+      <a href="${escapeHtml(exportBase)}?format=json" download class="btn btn-secondary" data-action="export-json">${escapeHtml(t("settings.exportJson") || "Exportar JSON")}</a>
+      <a href="${escapeHtml(exportBase)}?format=csv" download class="btn btn-secondary" data-action="export-csv">${escapeHtml(t("settings.exportCsv") || "Exportar CSV")}</a>
     </div>
   </div>
 

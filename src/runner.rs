@@ -1,6 +1,7 @@
 //! Single-flight test runner: lock, one retry, persistence, events and
 //! automatic expected values.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
@@ -14,7 +15,7 @@ use crate::db::config::{self, AppConfig, ExpectedMode};
 use crate::db::tests_repo::{self, Metrics, NewSpeedtest, TestKind};
 use crate::measure::ThroughputConfig;
 use crate::net;
-use crate::providers::{Measurement, RunOptions, SpeedProvider, build_provider};
+use crate::providers::{Measurement, RunOptions, SpeedProvider, build_provider_in};
 
 const EVENT_CAPACITY: usize = 64;
 /// Successful tests needed (and used) to derive automatic expected values.
@@ -83,7 +84,17 @@ impl Runner {
 
     /// A runner that builds the provider selected in the config.
     pub fn with_default_providers(db: Db) -> Runner {
-        Runner::new(db, Arc::new(|cfg| build_provider(cfg)))
+        let data_dir = std::env::var("NETRACK_DATA_DIR")
+            .map_or_else(|_| PathBuf::from("/data"), PathBuf::from);
+        Self::with_default_providers_in(db, data_dir)
+    }
+
+    /// A runner that builds the provider selected in the config using `data_dir`.
+    pub fn with_default_providers_in(db: Db, data_dir: PathBuf) -> Runner {
+        Runner::new(
+            db,
+            Arc::new(move |cfg| build_provider_in(cfg, &data_dir)),
+        )
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<RunEvent> {

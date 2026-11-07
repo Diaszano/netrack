@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&settings.data_dir)
         .with_context(|| format!("cannot create {}", settings.data_dir.display()))?;
     let db = Db::open(&settings.data_dir.join("netrack.db"), settings.tz).await?;
-    let runner = Runner::with_default_providers(db.clone());
+    let runner = Runner::with_default_providers_in(db.clone(), settings.data_dir.clone());
     let (reload_tx, reload_rx) = watch::channel(());
     let scheduler = Arc::new(Scheduler::spawn(
         db.clone(),

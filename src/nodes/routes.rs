@@ -252,7 +252,8 @@ async fn proxy_req(
 
     let base_url = node.url.trim_end_matches('/');
     let subpath = path.trim_start_matches('/');
-    let target_path = if subpath.is_empty() {
+    let subpath = subpath.strip_prefix("api/").unwrap_or(subpath);
+    let target_path = if subpath.is_empty() || subpath == "api" {
         format!("{base_url}/api")
     } else {
         format!("{base_url}/api/{subpath}")
