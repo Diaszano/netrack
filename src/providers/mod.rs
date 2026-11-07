@@ -123,24 +123,41 @@ async fn get_ok(
         .map_err(net_err)
 }
 
-/// Server processing time in ms from a `Server-Timing` header: the first
-/// `dur=` parameter across all entries and header lines, as the official
-/// Cloudflare speed test does.
+/// Below this a reported server duration is ignored (ms).
+const SERVER_TIME_MIN_MS: f64 = 0.01;
+
+/// Server processing time in ms from `Server-Timing` (all header lines), as
+/// the official Cloudflare speed test computes it: the `cfRequestDuration`
+/// (or `cfReqDur`) entry if present, else the sum of all `cfSpeed*` entries
+/// (e.g. `cfSpeedEdge;dur=5, cfSpeedWorker;dur=25` is 30 ms).
 pub(crate) fn server_timing_ms(headers: &HeaderMap) -> Option<f64> {
-    headers
+    let entries: Vec<(String, f64)> = headers
         .get_all("server-timing")
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(','))
-        .flat_map(|entry| entry.split(';').skip(1))
-        .find_map(|param| {
-            param
-                .trim()
-                .strip_prefix("dur=")?
-                .trim_matches('"')
-                .parse::<f64>()
-                .ok()
+        .filter_map(|entry| {
+            let mut parts = entry.split(';');
+            let name = parts.next()?.trim().to_ascii_lowercase();
+            let dur = parts.find_map(|p| p.trim().strip_prefix("dur=")?.parse::<f64>().ok())?;
+            Some((name, dur))
         })
+        .collect();
+    let request = entries.iter().find(|(name, _)| {
+        matches!(
+            name.as_str(),
+            "cfreqdur" | "cfrequestdur" | "cfreqduration" | "cfrequestduration"
+        )
+    });
+    if let Some(&(_, dur)) = request.filter(|(_, dur)| *dur > SERVER_TIME_MIN_MS) {
+        return Some(dur);
+    }
+    let sum: f64 = entries
+        .iter()
+        .filter(|(name, _)| name.starts_with("cfspeed"))
+        .map(|(_, dur)| dur)
+        .sum();
+    (sum > SERVER_TIME_MIN_MS).then_some(sum)
 }
 
 /// One latency sample: time to response headers minus the server time the
@@ -247,17 +264,31 @@ mod tests {
     }
 
     #[test]
-    fn server_timing_takes_first_dur_across_entries() {
-        let h = headers(&["cfSpeedEdge;dur=8, cfSpeedWorker;dur=29"]);
-        assert_eq!(server_timing_ms(&h), Some(8.0));
-        let h = headers(&["cfRequestDuration;dur=12.5"]);
+    fn server_timing_sums_cf_speed_entries() {
+        // Real speed.cloudflare.com response shape.
+        let h = headers(&[
+            "cfSpeedEdge;dur=5, cfSpeedWorker;dur=25",
+            "cfL4;desc=\"?proto=TCP&rtt=13835\"",
+        ]);
+        assert_eq!(server_timing_ms(&h), Some(30.0));
+    }
+
+    #[test]
+    fn server_timing_prefers_request_duration() {
+        let h = headers(&["cfSpeedEdge;dur=10, cfSpeedWorker;dur=20, cfReqDur;dur=45.5"]);
+        assert_eq!(server_timing_ms(&h), Some(45.5));
+        let h = headers(&["cfSpeedEdge;dur=10", "cfRequestDuration;dur=12.5"]);
         assert_eq!(server_timing_ms(&h), Some(12.5));
     }
 
     #[test]
-    fn server_timing_skips_entries_without_dur_and_spans_header_lines() {
-        let h = headers(&["cfL4;desc=\"?proto=TCP\"", "cfSpeedWorker;desc=x;dur=29"]);
-        assert_eq!(server_timing_ms(&h), Some(29.0));
-        assert_eq!(server_timing_ms(&headers(&["miss, db;desc=x"])), None);
+    fn server_timing_ignores_entries_without_dur_or_unknown_names() {
+        let h = headers(&["cfL4;desc=\"?proto=TCP&rtt=0\""]);
+        assert_eq!(server_timing_ms(&h), None);
+        assert_eq!(
+            server_timing_ms(&headers(&["db;dur=50, cache;desc=x"])),
+            None
+        );
+        assert_eq!(server_timing_ms(&headers(&["cfSpeedEdge;dur=0"])), None);
     }
 }
