@@ -48,18 +48,15 @@ async fn main() -> anyhow::Result<()> {
 
     // `state` (and its reload sender) lives until the servers have stopped.
     let state = AppState::new(db, runner, reload_tx, scheduler);
+    let stop_state = state.clone();
+    let stop_rx = state.shutdown.subscribe();
     let app = router(state);
 
     let v4 = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], settings.port)))
         .await
         .with_context(|| format!("cannot bind 0.0.0.0:{}", settings.port))?;
     tracing::info!(addr = %v4.local_addr()?, "listening");
-    let v6 = match TcpListener::bind(SocketAddr::from((
-        std::net::Ipv6Addr::UNSPECIFIED,
-        settings.port,
-    )))
-    .await
-    {
+    let v6 = match bind_v6_only(settings.port) {
         Ok(l) => {
             tracing::info!(addr = %l.local_addr()?, "listening");
             Some(l)
@@ -70,11 +67,10 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let (stop_tx, stop_rx) = watch::channel(false);
     tokio::spawn(async move {
         shutdown_signal().await;
         tracing::info!("shutting down");
-        let _ = stop_tx.send(true);
+        stop_state.trigger_shutdown();
     });
 
     let serve = |listener: TcpListener| {
@@ -107,4 +103,17 @@ async fn shutdown_signal() {
         _ = tokio::signal::ctrl_c() => {}
         _ = term.recv() => {}
     }
+}
+
+/// Binds `[::]` for IPv6 only, so it coexists with the `0.0.0.0` listener
+/// even where `bindv6only=0` would make `[::]` dual-stack.
+fn bind_v6_only(port: u16) -> std::io::Result<TcpListener> {
+    use socket2::{Domain, Socket, Type};
+    let socket = Socket::new(Domain::IPV6, Type::STREAM, None)?;
+    socket.set_only_v6(true)?;
+    socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port)).into())?;
+    socket.listen(1024)?;
+    TcpListener::from_std(socket.into())
 }

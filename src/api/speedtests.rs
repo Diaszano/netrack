@@ -1,17 +1,17 @@
 use std::convert::Infallible;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::NaiveDate;
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::broadcast::error::RecvError;
 
-use super::{ApiError, ApiResult, AppState};
+use super::{ApiError, ApiPath, ApiQuery, ApiResult, AppState};
 use crate::db::config;
 use crate::db::stats::{self, Statistics};
 use crate::db::tests_repo::{self, SpeedtestRow, TestKind};
@@ -39,20 +39,23 @@ struct ListQuery {
 
 async fn list(
     State(s): State<AppState>,
-    Query(q): Query<ListQuery>,
+    ApiQuery(q): ApiQuery<ListQuery>,
 ) -> ApiResult<Json<Vec<SpeedtestRow>>> {
     let rows = tests_repo::list(&s.db, q.before, q.limit.unwrap_or(DEFAULT_LIMIT)).await?;
     Ok(Json(rows))
 }
 
-async fn get_one(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult<Json<SpeedtestRow>> {
+async fn get_one(
+    State(s): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+) -> ApiResult<Json<SpeedtestRow>> {
     tests_repo::get(&s.db, id)
         .await?
         .map(Json)
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "speedtest not found"))
 }
 
-async fn delete_one(State(s): State<AppState>, Path(id): Path<i64>) -> ApiResult<StatusCode> {
+async fn delete_one(State(s): State<AppState>, ApiPath(id): ApiPath<i64>) -> ApiResult<StatusCode> {
     if tests_repo::delete(&s.db, id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -116,7 +119,7 @@ fn parse_date(name: &str, v: Option<&str>) -> Result<NaiveDate, ApiError> {
 
 async fn statistics(
     State(s): State<AppState>,
-    Query(q): Query<RangeQuery>,
+    ApiQuery(q): ApiQuery<RangeQuery>,
 ) -> ApiResult<Json<Statistics>> {
     let from = parse_date("from", q.from.as_deref())?;
     let to = parse_date("to", q.to.as_deref())?;
@@ -142,6 +145,10 @@ async fn events(State(s): State<AppState>) -> Sse<impl Stream<Item = Result<Even
                 Err(RecvError::Closed) => return None,
             }
         }
+    });
+    let mut stop = s.shutdown.subscribe();
+    let stream = stream.take_until(async move {
+        let _ = stop.wait_for(|down| *down).await;
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }

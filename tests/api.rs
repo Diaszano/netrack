@@ -350,3 +350,95 @@ async fn system_status_and_interfaces() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.is_array());
 }
+
+async fn assert_json_error(
+    app: &Router,
+    method: Method,
+    uri: &str,
+    body: Option<(&str, &str)>,
+    expected: StatusCode,
+) {
+    let mut req = Request::builder().method(method).uri(uri);
+    let body = match body {
+        Some((ct, b)) => {
+            req = req.header("content-type", ct);
+            Body::from(b.to_owned())
+        }
+        None => Body::empty(),
+    };
+    let res = app.clone().oneshot(req.body(body).unwrap()).await.unwrap();
+    assert_eq!(res.status(), expected, "{uri}");
+    assert_eq!(
+        res.headers()["content-type"].to_str().unwrap(),
+        "application/json",
+        "{uri}"
+    );
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(v["error"].as_str().is_some_and(|s| !s.is_empty()), "{uri}");
+}
+
+#[tokio::test]
+async fn rejections_and_unknown_routes_are_json_errors() {
+    let ctx = setup(Duration::ZERO).await;
+    let bad = StatusCode::BAD_REQUEST;
+    assert_json_error(
+        &ctx.app,
+        Method::PATCH,
+        "/api/config/cron",
+        Some(("application/json", "{not json")),
+        bad,
+    )
+    .await;
+    assert_json_error(&ctx.app, Method::GET, "/api/speedtests/abc", None, bad).await;
+    assert_json_error(&ctx.app, Method::GET, "/api/speedtests?limit=x", None, bad).await;
+    assert_json_error(
+        &ctx.app,
+        Method::GET,
+        "/api/nope",
+        None,
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+    assert_json_error(
+        &ctx.app,
+        Method::POST,
+        "/healthz",
+        None,
+        StatusCode::METHOD_NOT_ALLOWED,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn open_event_stream_ends_on_shutdown() {
+    let db = Db::open_in_memory(chrono_tz::Tz::UTC).await.unwrap();
+    let factory: ProviderFactory = Arc::new(|_| {
+        Box::new(FakeProvider {
+            delay: Duration::ZERO,
+        })
+    });
+    let runner = Runner::new(db.clone(), factory);
+    let (tx, rx) = watch::channel(());
+    let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx);
+    let state = AppState::new(db, runner, tx, Arc::new(scheduler));
+    let app = router(state.clone());
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/speedtests/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut stream = res.into_body().into_data_stream();
+    state.trigger_shutdown();
+    let end = tokio::time::timeout(Duration::from_secs(5), async {
+        while stream.next().await.is_some() {}
+    })
+    .await;
+    assert!(end.is_ok(), "SSE stream still open after shutdown");
+}

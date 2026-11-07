@@ -1,10 +1,10 @@
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, patch};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use super::{ApiError, ApiResult, AppState};
+use super::{ApiError, ApiJson, ApiPath, ApiResult, AppState};
 use crate::db::config::{self, AppConfig, ConfigError};
 
 pub(super) fn routes() -> Router<AppState> {
@@ -24,8 +24,8 @@ struct Patch {
 
 async fn patch_config(
     State(s): State<AppState>,
-    Path(key): Path<String>,
-    Json(body): Json<Patch>,
+    ApiPath(key): ApiPath<String>,
+    ApiJson(body): ApiJson<Patch>,
 ) -> ApiResult<StatusCode> {
     match config::set(&s.db, &key, &body.value).await {
         Ok(()) => {

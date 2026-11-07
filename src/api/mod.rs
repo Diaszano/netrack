@@ -10,6 +10,8 @@ use std::time::Instant;
 
 use axum::Json;
 use axum::Router;
+use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
+use axum::extract::{FromRequest, FromRequestParts};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -33,6 +35,8 @@ pub struct AppState {
     pub reload: watch::Sender<()>,
     pub scheduler: Arc<Scheduler>,
     pub started_at: Instant,
+    /// Flips to true on shutdown; ends long-lived streams (SSE).
+    pub shutdown: watch::Sender<bool>,
     pub libre_list_url: String,
     pub(crate) libre_cache: LibreCache,
 }
@@ -50,9 +54,14 @@ impl AppState {
             reload,
             scheduler,
             started_at: Instant::now(),
+            shutdown: watch::channel(false).0,
             libre_list_url: DEFAULT_LIST_URL.to_owned(),
             libre_cache: Arc::default(),
         }
+    }
+
+    pub fn trigger_shutdown(&self) {
+        self.shutdown.send_replace(true);
     }
 
     /// Tells the scheduler to re-read the config.
@@ -67,6 +76,8 @@ pub fn router(state: AppState) -> Router {
         .merge(speedtests::routes())
         .merge(config::routes())
         .merge(system::routes())
+        .fallback(not_found)
+        .method_not_allowed_fallback(method_not_allowed)
         .with_state(state)
 }
 
@@ -97,3 +108,44 @@ impl IntoResponse for ApiError {
 }
 
 pub(crate) type ApiResult<T> = Result<T, ApiError>;
+
+async fn not_found() -> ApiError {
+    ApiError::new(StatusCode::NOT_FOUND, "not found")
+}
+
+async fn method_not_allowed() -> ApiError {
+    ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method not allowed")
+}
+
+/// `Json` extractor whose rejections render as `{ "error": ... }`.
+#[derive(FromRequest)]
+#[from_request(via(axum::Json), rejection(ApiError))]
+pub(crate) struct ApiJson<T>(pub T);
+
+/// `Path` extractor whose rejections render as `{ "error": ... }`.
+#[derive(FromRequestParts)]
+#[from_request(via(axum::extract::Path), rejection(ApiError))]
+pub(crate) struct ApiPath<T>(pub T);
+
+/// `Query` extractor whose rejections render as `{ "error": ... }`.
+#[derive(FromRequestParts)]
+#[from_request(via(axum::extract::Query), rejection(ApiError))]
+pub(crate) struct ApiQuery<T>(pub T);
+
+impl From<JsonRejection> for ApiError {
+    fn from(r: JsonRejection) -> ApiError {
+        ApiError::new(r.status(), r.body_text())
+    }
+}
+
+impl From<PathRejection> for ApiError {
+    fn from(r: PathRejection) -> ApiError {
+        ApiError::new(r.status(), r.body_text())
+    }
+}
+
+impl From<QueryRejection> for ApiError {
+    fn from(r: QueryRejection) -> ApiError {
+        ApiError::new(r.status(), r.body_text())
+    }
+}
