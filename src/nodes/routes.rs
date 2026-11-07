@@ -347,6 +347,7 @@ async fn proxy_req(
                 | "trailer"
                 | "transfer-encoding"
                 | "upgrade"
+                | "set-cookie"
         ) {
             continue;
         }

@@ -62,6 +62,12 @@ impl MockNodeServer {
                     ]))
                 }),
             )
+            .route(
+                "/api/cookie",
+                axum::routing::get(|| async {
+                    ([("set-cookie", "netrack_session=remote; Path=/")], "ok")
+                }),
+            )
             .fallback(move |req: axum::extract::Request| {
                 let reqs = reqs.clone();
                 async move {
@@ -573,4 +579,32 @@ async fn test_transparent_proxy_get_and_post() {
         .await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(err["error"].as_str().unwrap().contains("proxy"));
+}
+
+#[tokio::test]
+async fn proxy_strips_remote_set_cookie() {
+    let mock = MockNodeServer::start().await;
+    let app = TestApp::new().await;
+    let (_, _, created) = app
+        .request(
+            Method::POST,
+            "/api/nodes",
+            Some(json!({ "name": "Cookie Node", "url": mock.url() })),
+            None,
+            None,
+        )
+        .await;
+    let id = created["id"].as_i64().unwrap();
+
+    let (status, headers, _) = app
+        .request(
+            Method::GET,
+            &format!("/api/nodes/{id}/proxy/cookie"),
+            None,
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.get("set-cookie").is_none());
 }
