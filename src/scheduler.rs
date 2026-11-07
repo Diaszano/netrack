@@ -14,6 +14,9 @@ use crate::db::tests_repo::{self, TestKind};
 use crate::runner::{RunError, Runner};
 
 const MAX_OFFSET: Duration = Duration::from_secs(300);
+/// Longest single sleep, so wall-clock steps (NTP, fake-hwclock) are noticed.
+const MAX_SLEEP: Duration = Duration::from_secs(30);
+const RETRY_DELAY: Duration = Duration::from_secs(60);
 const RETENTION_CRON: &str = "0 3 * * *";
 
 /// Next cron occurrence strictly after `after`, in the timezone of `after`.
@@ -43,6 +46,9 @@ pub fn next_fire(
     Ok(next + chrono::Duration::milliseconds(delay as i64))
 }
 
+/// Source of wall-clock time; injectable so tests control it.
+pub type Clock = Arc<dyn Fn() -> DateTime<Utc> + Send + Sync>;
+
 /// Background cron scheduler plus the daily retention job. Dropping it stops both.
 pub struct Scheduler {
     next_run: Arc<Mutex<Option<DateTime<Utc>>>>,
@@ -53,10 +59,25 @@ impl Scheduler {
     /// `reload` must be signalled after any config change so the next fire
     /// time is recomputed from fresh config.
     pub fn spawn(db: Db, runner: Runner, reload: watch::Receiver<()>) -> Scheduler {
+        Scheduler::spawn_with_clock(db, runner, reload, Arc::new(Utc::now))
+    }
+
+    pub fn spawn_with_clock(
+        db: Db,
+        runner: Runner,
+        reload: watch::Receiver<()>,
+        clock: Clock,
+    ) -> Scheduler {
         let next_run = Arc::new(Mutex::new(None));
         let tasks = vec![
-            tokio::spawn(schedule_loop(db.clone(), runner, reload, next_run.clone())),
-            tokio::spawn(retention_loop(db)),
+            tokio::spawn(schedule_loop(
+                db.clone(),
+                runner,
+                reload,
+                next_run.clone(),
+                clock.clone(),
+            )),
+            tokio::spawn(retention_loop(db, clock)),
         ];
         Scheduler { next_run, tasks }
     }
@@ -75,8 +96,34 @@ impl Drop for Scheduler {
     }
 }
 
-fn until(target: DateTime<Utc>) -> Duration {
-    (target - Utc::now()).to_std().unwrap_or_default()
+enum Wake {
+    /// Wall time reached the target.
+    Reached,
+    /// Wall time moved backwards; the plan is stale.
+    SteppedBack,
+}
+
+/// Waits until the wall clock reaches `target`, sleeping in bounded chunks and
+/// re-reading the clock after each so clock steps in either direction are noticed.
+async fn wait_until(clock: &Clock, target: DateTime<Utc>) -> Wake {
+    let mut prev = clock();
+    loop {
+        let Ok(remaining) = (target - prev).to_std() else {
+            return Wake::Reached;
+        };
+        if remaining.is_zero() {
+            return Wake::Reached;
+        }
+        tokio::time::sleep(remaining.min(MAX_SLEEP)).await;
+        let now = clock();
+        if now < prev {
+            return Wake::SteppedBack;
+        }
+        if now >= target {
+            return Wake::Reached;
+        }
+        prev = now;
+    }
 }
 
 async fn schedule_loop(
@@ -84,47 +131,61 @@ async fn schedule_loop(
     runner: Runner,
     mut reload: watch::Receiver<()>,
     shared: Arc<Mutex<Option<DateTime<Utc>>>>,
+    clock: Clock,
 ) {
-    // Never plan at or before a slot that already fired, even if the wall
-    // clock lags the timer that woke us, so a slot cannot fire twice.
-    let mut last_fired: Option<DateTime<Utc>> = None;
     loop {
-        let target = match plan(&db, last_fired).await {
-            Ok(t) => t,
+        let planned = plan(&db, clock()).await;
+        let target = match &planned {
+            Ok(t) => *t,
             Err(e) => {
-                tracing::error!(error = %e, "cannot schedule next test; waiting for config change");
+                tracing::error!(error = %e, "cannot schedule next test; will retry");
                 None
             }
         };
         *shared.lock().unwrap() = target;
 
         let Some(target) = target else {
-            if reload.changed().await.is_err() {
-                return;
+            // Paused: only a config change matters. Error: retry on a timer too.
+            let retry = async {
+                if planned.is_err() {
+                    tokio::time::sleep(RETRY_DELAY).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            };
+            tokio::select! {
+                changed = reload.changed() => {
+                    if changed.is_err() {
+                        tracing::warn!("config reload channel closed; scheduler stopping");
+                        return;
+                    }
+                }
+                _ = retry => {}
             }
             continue;
         };
         tokio::select! {
             changed = reload.changed() => {
                 if changed.is_err() {
+                    tracing::warn!("config reload channel closed; scheduler stopping");
                     return;
                 }
             }
-            _ = tokio::time::sleep(until(target)) => {
-                last_fired = Some(target);
-                fire(&runner);
+            wake = wait_until(&clock, target) => {
+                if matches!(wake, Wake::Reached) {
+                    fire(&runner);
+                }
             }
         }
     }
 }
 
-/// The next fire time from fresh config, or `None` while paused.
-async fn plan(db: &Db, floor: Option<DateTime<Utc>>) -> anyhow::Result<Option<DateTime<Utc>>> {
+/// The next fire time strictly after `now` from fresh config, or `None` while paused.
+async fn plan(db: &Db, now: DateTime<Utc>) -> anyhow::Result<Option<DateTime<Utc>>> {
     let cfg = config::load(db).await?;
     if cfg.paused {
         return Ok(None);
     }
-    let now = floor.map_or(Utc::now(), |f| f.max(Utc::now()));
     let now = now.with_timezone(&db.tz());
     let next = next_fire(&cfg.cron, cfg.schedule_offset, now, &mut rand::rng())?;
     Ok(Some(next.with_timezone(&Utc)))
@@ -146,12 +207,12 @@ fn fire(runner: &Runner) {
     });
 }
 
-async fn retention_loop(db: Db) {
+async fn retention_loop(db: Db, clock: Clock) {
     loop {
-        if let Err(e) = purge(&db).await {
+        if let Err(e) = purge(&db, clock()).await {
             tracing::error!(error = %e, "retention job failed");
         }
-        let now = Utc::now().with_timezone(&db.tz());
+        let now = clock().with_timezone(&db.tz());
         let next = match next_fire(RETENTION_CRON, false, now, &mut rand::rng()) {
             Ok(n) => n.with_timezone(&Utc),
             Err(e) => {
@@ -159,13 +220,14 @@ async fn retention_loop(db: Db) {
                 return;
             }
         };
-        tokio::time::sleep(until(next)).await;
+        // A backward step replans; the purge on re-entry is harmless.
+        wait_until(&clock, next).await;
     }
 }
 
-async fn purge(db: &Db) -> anyhow::Result<()> {
+async fn purge(db: &Db, now: DateTime<Utc>) -> anyhow::Result<()> {
     let cfg = config::load(db).await.context("loading config")?;
-    let removed = tests_repo::delete_older_than(db, cfg.retention_days, Utc::now()).await?;
+    let removed = tests_repo::delete_older_than(db, cfg.retention_days, now).await?;
     if removed > 0 {
         tracing::info!(removed, "retention removed old speed tests");
     }

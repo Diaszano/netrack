@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -11,21 +11,30 @@ use netrack::db::config;
 use netrack::db::tests_repo::{self, Metrics, NewSpeedtest, TestKind};
 use netrack::providers::{Measurement, ProviderError, RunOptions, SpeedProvider};
 use netrack::runner::{ProviderFactory, Runner};
-use netrack::scheduler::{Scheduler, next_fire};
+use netrack::scheduler::{Clock, Scheduler, next_fire};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use tokio::sync::watch;
 
-struct Counting(Arc<AtomicUsize>);
+struct Counting {
+    calls: Arc<AtomicUsize>,
+    delay: Duration,
+    fail: bool,
+}
 
 impl SpeedProvider for Counting {
     fn name(&self) -> &'static str {
         "fake"
     }
     fn run<'a>(&'a self, _: &'a RunOptions) -> BoxFuture<'a, Result<Measurement, ProviderError>> {
-        let calls = self.0.clone();
+        let calls = self.calls.clone();
+        let (delay, fail) = (self.delay, self.fail);
         async move {
             calls.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(delay).await;
+            if fail {
+                return Err(ProviderError::Network("down".into()));
+            }
             Ok(Measurement {
                 ping: 10.0,
                 jitter: 1.0,
@@ -86,27 +95,78 @@ fn next_fire_rejects_invalid_cron() {
     assert!(next_fire("not a cron", false, after, &mut rng).is_err());
 }
 
-async fn setup(calls: &Arc<AtomicUsize>) -> (Db, Runner) {
+async fn setup_with(calls: &Arc<AtomicUsize>, delay: Duration, fail: bool) -> (Db, Runner) {
     let db = Db::open_in_memory(chrono_tz::UTC).await.unwrap();
     let calls = calls.clone();
-    let factory: ProviderFactory = Arc::new(move |_| Box::new(Counting(calls.clone())));
+    let factory: ProviderFactory = Arc::new(move |_| {
+        Box::new(Counting {
+            calls: calls.clone(),
+            delay,
+            fail,
+        })
+    });
     let runner = Runner::new(db.clone(), factory);
     (db, runner)
 }
 
-/// Advances virtual time in small steps, yielding so spawned tasks and
+async fn setup(calls: &Arc<AtomicUsize>) -> (Db, Runner) {
+    setup_with(calls, Duration::ZERO, false).await
+}
+
+/// Wall clock driven by tokio's (virtual) time plus manual steps.
+struct TestClock {
+    base: DateTime<Utc>,
+    start: tokio::time::Instant,
+    skew: Mutex<chrono::Duration>,
+}
+
+impl TestClock {
+    fn new(base: &str) -> Arc<TestClock> {
+        Arc::new(TestClock {
+            base: utc(base),
+            start: tokio::time::Instant::now(),
+            skew: Mutex::new(chrono::Duration::zero()),
+        })
+    }
+    fn now(&self) -> DateTime<Utc> {
+        self.base
+            + chrono::Duration::from_std(self.start.elapsed()).unwrap()
+            + *self.skew.lock().unwrap()
+    }
+    fn step(&self, d: chrono::Duration) {
+        *self.skew.lock().unwrap() += d;
+    }
+    fn clock(self: &Arc<Self>) -> Clock {
+        let c = self.clone();
+        Arc::new(move || c.now())
+    }
+}
+
+/// Advances virtual time in 1s steps, yielding so spawned tasks and
 /// spawn_blocking database calls get to make progress.
-async fn advance(total: Duration) {
-    let step = Duration::from_secs(1);
-    let mut elapsed = Duration::ZERO;
-    while elapsed < total {
-        tokio::time::advance(step).await;
-        elapsed += step;
+async fn advance(secs: u64) {
+    for _ in 0..secs {
+        tokio::time::advance(Duration::from_secs(1)).await;
         for _ in 0..5 {
             tokio::task::yield_now().await;
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
     }
+}
+
+/// Writes a config value bypassing validation.
+async fn raw_set(db: &Db, key: &str, value: &str) {
+    let (k, v) = (key.to_owned(), value.to_owned());
+    db.call(move |c| {
+        c.execute(
+            "INSERT INTO config (key, value) VALUES (?1, ?2) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (k, v),
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -116,18 +176,108 @@ async fn paused_scheduler_does_not_run() {
     config::set(&db, "cron", "* * * * *").await.unwrap();
     config::set(&db, "schedule_offset", "false").await.unwrap();
     config::set(&db, "paused", "true").await.unwrap();
+    let tc = TestClock::new("2026-03-10T10:00:10Z");
     let (tx, rx) = watch::channel(());
-    let sched = Scheduler::spawn(db.clone(), runner, rx);
+    let sched = Scheduler::spawn_with_clock(db.clone(), runner, rx, tc.clock());
 
-    advance(Duration::from_secs(180)).await;
+    advance(180).await;
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert!(sched.next_run().is_none());
 
     config::set(&db, "paused", "false").await.unwrap();
     tx.send(()).unwrap();
-    advance(Duration::from_secs(61)).await;
+    advance(61).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert!(sched.next_run().is_some());
+}
+
+#[tokio::test(start_paused = true)]
+async fn failing_runs_do_not_stop_later_fires() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (db, runner) = setup_with(&calls, Duration::ZERO, true).await;
+    config::set(&db, "cron", "* * * * *").await.unwrap();
+    config::set(&db, "schedule_offset", "false").await.unwrap();
+    let tc = TestClock::new("2026-03-10T10:00:10Z");
+    let (_tx, rx) = watch::channel(());
+    let _sched = Scheduler::spawn_with_clock(db.clone(), runner, rx, tc.clock());
+
+    advance(190).await;
+    // Three fires, each attempt retried once by the runner.
+    assert_eq!(calls.load(Ordering::SeqCst), 6);
+}
+
+#[tokio::test(start_paused = true)]
+async fn busy_runner_does_not_stop_later_fires() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (db, runner) = setup_with(&calls, Duration::from_secs(150), false).await;
+    config::set(&db, "cron", "* * * * *").await.unwrap();
+    config::set(&db, "schedule_offset", "false").await.unwrap();
+    let tc = TestClock::new("2026-03-10T10:00:10Z");
+    let (_tx, rx) = watch::channel(());
+    let _sched = Scheduler::spawn_with_clock(db.clone(), runner, rx, tc.clock());
+
+    // Fires at :00 (runs until +150s), +60 and +120 are Busy, +180... runs again.
+    advance(250).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn invalid_cron_recovers_after_reload() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (db, runner) = setup(&calls).await;
+    config::set(&db, "schedule_offset", "false").await.unwrap();
+    raw_set(&db, "cron", "not a cron").await;
+    let tc = TestClock::new("2026-03-10T10:00:10Z");
+    let (tx, rx) = watch::channel(());
+    let sched = Scheduler::spawn_with_clock(db.clone(), runner, rx, tc.clock());
+
+    advance(120).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(sched.next_run().is_none());
+
+    config::set(&db, "cron", "* * * * *").await.unwrap();
+    tx.send(()).unwrap();
+    advance(61).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn backward_clock_jump_does_not_stall() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (db, runner) = setup(&calls).await; // default cron: hourly
+    config::set(&db, "schedule_offset", "false").await.unwrap();
+    let tc = TestClock::new("2026-03-10T10:30:00Z");
+    let (_tx, rx) = watch::channel(());
+    let sched = Scheduler::spawn_with_clock(db.clone(), runner, rx, tc.clock());
+    advance(5).await;
+    assert_eq!(sched.next_run(), Some(utc("2026-03-10T11:00:00Z")));
+
+    // NTP steps the clock back five hours: now 05:30, next slot 06:00.
+    tc.step(chrono::Duration::hours(-5));
+    advance(40).await;
+    assert_eq!(sched.next_run(), Some(utc("2026-03-10T06:00:00Z")));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+    advance(30 * 60).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn transient_load_error_recovers_via_retry() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (db, runner) = setup(&calls).await;
+    config::set(&db, "cron", "* * * * *").await.unwrap();
+    config::set(&db, "schedule_offset", "false").await.unwrap();
+    raw_set(&db, "paused", "garbage").await; // makes config::load fail
+    let tc = TestClock::new("2026-03-10T10:00:10Z");
+    let (_tx, rx) = watch::channel(());
+    let sched = Scheduler::spawn_with_clock(db.clone(), runner, rx, tc.clock());
+
+    advance(30).await;
+    assert!(sched.next_run().is_none());
+    raw_set(&db, "paused", "false").await; // healed, no reload signalled
+    advance(100).await;
+    assert!(calls.load(Ordering::SeqCst) >= 1);
 }
 
 #[tokio::test]
