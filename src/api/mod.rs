@@ -76,8 +76,13 @@ pub fn router(state: AppState) -> Router {
         .merge(speedtests::routes())
         .merge(config::routes())
         .merge(system::routes())
+        .merge(crate::auth::routes::routes())
         .fallback(crate::web::serve)
         .method_not_allowed_fallback(method_not_allowed)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::middleware,
+        ))
         .with_state(state)
 }
 

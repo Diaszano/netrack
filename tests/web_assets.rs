@@ -334,4 +334,3 @@ fn all_es_module_imports_resolve_to_embedded_assets() {
         "Expected at least 5 module imports checked, found {total_imports}"
     );
 }
-

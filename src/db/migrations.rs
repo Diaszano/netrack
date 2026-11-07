@@ -1,4 +1,5 @@
-pub const MIGRATIONS: &[&str] = &[r#"
+pub const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE speedtests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -13,7 +14,16 @@ CREATE TABLE speedtests (
   error TEXT
 );
 CREATE INDEX speedtests_created_at ON speedtests(created_at);
-"#];
+"#,
+    r#"
+CREATE TABLE sessions (
+  token TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX sessions_expires_at ON sessions(expires_at);
+"#,
+];
 
 use rusqlite::OptionalExtension;
 

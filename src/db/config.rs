@@ -19,6 +19,25 @@ pub enum ExpectedMode {
     Manual,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PasswordMode {
+    #[default]
+    None,
+    Public,
+    Protected,
+}
+
+impl PasswordMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PasswordMode::None => "none",
+            PasswordMode::Public => "public",
+            PasswordMode::Protected => "protected",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
@@ -34,6 +53,9 @@ pub struct AppConfig {
     pub libre_url: Option<String>,
     pub interface: Option<String>,
     pub paused: bool,
+    pub password_mode: PasswordMode,
+    #[serde(skip)]
+    pub password_hash: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -59,6 +81,8 @@ const DEFAULTS: &[(&str, &str)] = &[
     ("libre_url", "none"),
     ("interface", "auto"),
     ("paused", "false"),
+    ("password_mode", "none"),
+    ("password_hash", ""),
 ];
 
 fn invalid(key: &str, reason: impl Into<String>) -> ConfigError {
@@ -130,6 +154,15 @@ fn parse_interface(v: &str) -> Option<String> {
     (v != "auto" && !v.is_empty()).then(|| v.to_owned())
 }
 
+fn parse_password_mode(key: &str, v: &str) -> Result<PasswordMode, ConfigError> {
+    match v {
+        "none" => Ok(PasswordMode::None),
+        "public" => Ok(PasswordMode::Public),
+        "protected" => Ok(PasswordMode::Protected),
+        _ => Err(invalid(key, "expected none, public, or protected")),
+    }
+}
+
 fn validate_cron(key: &str, v: &str) -> Result<(), ConfigError> {
     v.parse::<croner::Cron>()
         .map(|_| ())
@@ -150,6 +183,11 @@ fn validate(key: &str, v: &str) -> Result<(), ConfigError> {
         "libre_server_id" => parse_server_id(key, v).map(|_| ()),
         "libre_url" => parse_url(key, v).map(|_| ()),
         "interface" => Ok(()),
+        "password_mode" => parse_password_mode(key, v).map(|_| ()),
+        "password_hash" => Err(invalid(
+            key,
+            "cannot set password_hash directly; use /api/auth/password",
+        )),
         _ => Err(ConfigError::UnknownKey(key.to_owned())),
     }
 }
@@ -185,6 +223,8 @@ pub async fn load(db: &Db) -> anyhow::Result<AppConfig> {
             libre_url: parse_url("libre_url", get("libre_url"))?,
             interface: parse_interface(get("interface")),
             paused: parse_bool("paused", get("paused"))?,
+            password_mode: parse_password_mode("password_mode", get("password_mode"))?,
+            password_hash: get("password_hash").to_owned(),
         })
     })()
     .map_err(|e| anyhow::anyhow!("stored config is invalid: {e}"))?;
@@ -200,6 +240,32 @@ pub async fn set(db: &Db, key: &str, value: &str) -> Result<(), ConfigError> {
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             [&key, &value],
         )?;
+        Ok(())
+    })
+    .await?;
+    Ok(())
+}
+
+pub async fn set_password_and_mode(
+    db: &Db,
+    hash: &str,
+    mode: PasswordMode,
+) -> Result<(), ConfigError> {
+    let hash = hash.to_owned();
+    let mode_str = mode.as_str().to_owned();
+    db.call(move |conn| {
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO config (key, value) VALUES ('password_hash', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [&hash],
+        )?;
+        tx.execute(
+            "INSERT INTO config (key, value) VALUES ('password_mode', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [&mode_str],
+        )?;
+        tx.commit()?;
         Ok(())
     })
     .await?;
