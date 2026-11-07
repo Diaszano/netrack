@@ -8,8 +8,9 @@ RUN apk add --no-cache zig musl-dev ca-certificates \
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo install cargo-zigbuild --locked
 WORKDIR /src
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs ./
 COPY src ./src
+COPY web ./web
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target,id=netrack-target-$TARGETARCH \
     case "$TARGETARCH" in \

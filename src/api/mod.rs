@@ -76,7 +76,7 @@ pub fn router(state: AppState) -> Router {
         .merge(speedtests::routes())
         .merge(config::routes())
         .merge(system::routes())
-        .fallback(not_found)
+        .fallback(crate::web::serve)
         .method_not_allowed_fallback(method_not_allowed)
         .with_state(state)
 }
@@ -108,10 +108,6 @@ impl IntoResponse for ApiError {
 }
 
 pub(crate) type ApiResult<T> = Result<T, ApiError>;
-
-async fn not_found() -> ApiError {
-    ApiError::new(StatusCode::NOT_FOUND, "not found")
-}
 
 async fn method_not_allowed() -> ApiError {
     ApiError::new(StatusCode::METHOD_NOT_ALLOWED, "method not allowed")
