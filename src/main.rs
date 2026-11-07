@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // `state` (and its reload sender) lives until the servers have stopped.
-    let state = AppState::new(db, runner, reload_tx, scheduler);
+    let state = AppState::new(db, runner, reload_tx, scheduler).with_data_dir(settings.data_dir);
     let stop_state = state.clone();
     let stop_rx = state.shutdown.subscribe();
     let app = router(state);

@@ -10,6 +10,7 @@ pub enum Provider {
     Cloudflare,
     #[serde(rename = "librespeed")]
     LibreSpeed,
+    Ookla,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +57,8 @@ pub struct AppConfig {
     pub password_mode: PasswordMode,
     #[serde(skip)]
     pub password_hash: String,
+    pub ookla_license_agreed: bool,
+    pub ookla_server_id: Option<u32>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -83,6 +86,8 @@ const DEFAULTS: &[(&str, &str)] = &[
     ("paused", "false"),
     ("password_mode", "none"),
     ("password_hash", ""),
+    ("ookla_license_agreed", "false"),
+    ("ookla_server_id", "auto"),
 ];
 
 fn invalid(key: &str, reason: impl Into<String>) -> ConfigError {
@@ -111,7 +116,8 @@ fn parse_provider(key: &str, v: &str) -> Result<Provider, ConfigError> {
     match v {
         "cloudflare" => Ok(Provider::Cloudflare),
         "librespeed" => Ok(Provider::LibreSpeed),
-        _ => Err(invalid(key, "expected cloudflare or librespeed")),
+        "ookla" => Ok(Provider::Ookla),
+        _ => Err(invalid(key, "expected cloudflare, librespeed or ookla")),
     }
 }
 
@@ -183,6 +189,8 @@ fn validate(key: &str, v: &str) -> Result<(), ConfigError> {
         "libre_server_id" => parse_server_id(key, v).map(|_| ()),
         "libre_url" => parse_url(key, v).map(|_| ()),
         "interface" => Ok(()),
+        "ookla_license_agreed" => parse_bool(key, v).map(|_| ()),
+        "ookla_server_id" => parse_server_id(key, v).map(|_| ()),
         "password_mode" => Err(invalid(
             key,
             "cannot set password_mode directly; use /api/auth/password",
@@ -228,6 +236,8 @@ pub async fn load(db: &Db) -> anyhow::Result<AppConfig> {
             paused: parse_bool("paused", get("paused"))?,
             password_mode: parse_password_mode("password_mode", get("password_mode"))?,
             password_hash: get("password_hash").to_owned(),
+            ookla_license_agreed: parse_bool("ookla_license_agreed", get("ookla_license_agreed"))?,
+            ookla_server_id: parse_server_id("ookla_server_id", get("ookla_server_id"))?,
         })
     })()
     .map_err(|e| anyhow::anyhow!("stored config is invalid: {e}"))?;

@@ -3,6 +3,7 @@
 
 pub mod cloudflare;
 pub mod librespeed;
+pub mod ookla;
 
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -21,6 +22,7 @@ use crate::measure::{
 
 pub use cloudflare::Cloudflare;
 pub use librespeed::{LibreServer, LibreSource, LibreSpeed};
+pub use ookla::Ookla;
 
 /// Hard bound on one whole provider run.
 const RUN_TIMEOUT: Duration = Duration::from_secs(60);
@@ -49,6 +51,8 @@ pub enum ProviderError {
     Network(String),
     #[error("no usable server")]
     NoServer,
+    #[error("binary error: {0}")]
+    Binary(String),
     #[error(transparent)]
     Measure(#[from] MeasureError),
 }
@@ -78,6 +82,12 @@ pub fn build_provider(cfg: &AppConfig) -> Box<dyn SpeedProvider> {
                 (None, None) => LibreSource::Auto { list_url },
             };
             Box::new(LibreSpeed::new(source))
+        }
+        Provider::Ookla => {
+            let data_dir = std::env::var("NETRACK_DATA_DIR")
+                .map_or_else(|_| std::path::PathBuf::from("/data"), std::path::PathBuf::from);
+            let bin_path = data_dir.join("bin").join("speedtest");
+            Box::new(ookla::Ookla::new(bin_path, cfg.ookla_server_id))
         }
     }
 }

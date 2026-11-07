@@ -5,6 +5,7 @@ mod config;
 mod speedtests;
 mod system;
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -39,6 +40,8 @@ pub struct AppState {
     pub shutdown: watch::Sender<bool>,
     pub libre_list_url: String,
     pub(crate) libre_cache: LibreCache,
+    pub data_dir: PathBuf,
+    pub ookla_download_url: Option<String>,
 }
 
 impl AppState {
@@ -48,6 +51,8 @@ impl AppState {
         reload: watch::Sender<()>,
         scheduler: Arc<Scheduler>,
     ) -> AppState {
+        let data_dir = std::env::var("NETRACK_DATA_DIR")
+            .map_or_else(|_| PathBuf::from("/data"), PathBuf::from);
         AppState {
             db,
             runner,
@@ -57,7 +62,23 @@ impl AppState {
             shutdown: watch::channel(false).0,
             libre_list_url: DEFAULT_LIST_URL.to_owned(),
             libre_cache: Arc::default(),
+            data_dir,
+            ookla_download_url: None,
         }
+    }
+
+    pub fn with_data_dir(mut self, path: impl Into<PathBuf>) -> Self {
+        self.data_dir = path.into();
+        self
+    }
+
+    pub fn with_ookla_download_url(mut self, url: impl Into<String>) -> Self {
+        self.ookla_download_url = Some(url.into());
+        self
+    }
+
+    pub fn ookla_bin_path(&self) -> PathBuf {
+        self.data_dir.join("bin").join("speedtest")
     }
 
     pub fn trigger_shutdown(&self) {
