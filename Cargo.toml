@@ -1,0 +1,24 @@
+[package]
+name = "netrack"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "netrack"
+path = "src/lib.rs"
+
+[[bin]]
+name = "netrack"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono-tz = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+opt-level = 3
