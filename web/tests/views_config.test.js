@@ -7,6 +7,12 @@ import { createApiClient } from "../api.js";
 import { renderServers } from "../views/servers.js";
 import { renderSettings, saveConfigDiff } from "../views/settings.js";
 import { renderNodes, renderIntegrations } from "../views/seams.js";
+import {
+  extractServersFormValues,
+  extractSettingsFormValues,
+  onServersSubmit,
+  onSettingsSubmit,
+} from "../app.js";
 
 const ptBR = JSON.parse(
   fs.readFileSync(new URL("../locales/pt-BR.json", import.meta.url), "utf8")
@@ -189,3 +195,105 @@ test("nodes_and_integrations_seams_render_system_metrics_and_placeholders", () =
   assert.ok(intHtml.includes("integrations.emptyTitle") || intHtml.includes("Notificações e integrações"), "Must render integrations empty title");
   assert.ok(intHtml.includes("Discord") || intHtml.includes("Telegram"), "Must mention upcoming integrations");
 });
+
+test("servers_form_preserves_librespeed_config_when_provider_is_cloudflare", async () => {
+  const state = createMockState({
+    config: {
+      provider: "librespeed",
+      libreServerId: "42",
+      libreUrl: "https://my-libre.example.com",
+      interface: "eth0",
+    },
+  });
+
+  const fd = new FormData();
+  fd.append("provider", "cloudflare");
+  fd.append("interface", "eth0");
+  // Note: libreServerId and libreUrl are omitted because they were disabled in the UI
+
+  const extracted = extractServersFormValues(fd, state.config);
+  assert.equal(extracted.provider, "cloudflare");
+  assert.equal(extracted.libreServerId, "42", "Must preserve existing libreServerId");
+  assert.equal(extracted.libreUrl, "https://my-libre.example.com", "Must preserve existing libreUrl");
+
+  const patches = [];
+  const mockApiClient = {
+    async patchConfig(key, val) {
+      patches.push({ key, val });
+      return { ok: true };
+    },
+  };
+
+  let rendered = false;
+  let bannerUpdated = false;
+
+  await onServersSubmit(fd, state, mockApiClient, {
+    t: tPt,
+    onSaveSuccess: () => { rendered = true; },
+    onSaveError: () => { bannerUpdated = true; },
+  });
+
+  // Only provider should be patched; libre settings must not be overwritten or wiped
+  assert.equal(patches.length, 1);
+  assert.equal(patches[0].key, "provider");
+  assert.equal(patches[0].val, "cloudflare");
+  assert.equal(rendered, true);
+  assert.equal(state.config.libreServerId, "42");
+  assert.equal(state.config.libreUrl, "https://my-libre.example.com");
+});
+
+test("form_save_failure_does_not_call_render_preserving_form_state", async () => {
+  const state = createMockState();
+  const failingApiClient = {
+    async patchConfig() {
+      throw new Error("invalid value for cron");
+    },
+  };
+
+  const fd = new FormData();
+  fd.append("cron", "invalid");
+  fd.append("retentionDays", "30");
+
+  let rendered = false;
+  let bannerUpdated = false;
+
+  const result = await onSettingsSubmit(fd, state, failingApiClient, {
+    t: tPt,
+    onSaveSuccess: () => { rendered = true; },
+    onSaveError: () => { bannerUpdated = true; },
+  });
+
+  // On save failure, render() must NOT be called so user's form inputs are preserved in DOM
+  assert.equal(result.ok, false);
+  assert.equal(rendered, false, "render() must not be called on save failure");
+  assert.equal(bannerUpdated, true, "banner update must be called on save failure");
+  assert.equal(state.banner?.kind, "error");
+  assert.ok(state.banner?.text.includes("invalid value for cron"));
+
+  // Also verify onServersSubmit on failure
+  let serversRendered = false;
+  let serversBannerUpdated = false;
+  const sFd = new FormData();
+  sFd.append("provider", "librespeed");
+
+  const sResult = await onServersSubmit(sFd, state, failingApiClient, {
+    t: tPt,
+    onSaveSuccess: () => { serversRendered = true; },
+    onSaveError: () => { serversBannerUpdated = true; },
+  });
+
+  assert.equal(sResult.ok, false);
+  assert.equal(serversRendered, false, "render() must not be called on servers save failure");
+  assert.equal(serversBannerUpdated, true, "banner update must be called on servers save failure");
+  assert.equal(state.banner?.kind, "error");
+});
+
+test("settings_retention_days_does_not_silently_reset_empty_input_to_365", () => {
+  const fd = new FormData();
+  fd.append("cron", "0 * * * *");
+  fd.append("retentionDays", "");
+
+  const extracted = extractSettingsFormValues(fd);
+  assert.equal(extracted.retentionDays, "", "Empty retentionDays must remain empty string and not be coerced to 365");
+});
+

@@ -179,7 +179,7 @@ function updateTopbar() {
 /**
  * Updates the notification/error banner container.
  */
-function updateBanner() {
+export function updateBanner() {
   const bannerContainer = document.getElementById("banner-container");
   if (!bannerContainer) return;
 
@@ -378,6 +378,102 @@ function ensureChartTooltip() {
 }
 
 /**
+ * Extracts Servers form values from FormData, preserving LibreSpeed settings when provider is Cloudflare
+ * (since disabled controls are omitted from FormData).
+ */
+export function extractServersFormValues(formData, currentConfig = {}) {
+  return {
+    provider: formData.get("provider") || "cloudflare",
+    libreServerId: formData.get("libreServerId") ?? currentConfig?.libreServerId ?? "auto",
+    libreUrl: formData.get("libreUrl") ?? currentConfig?.libreUrl ?? "",
+    interface: formData.get("interface") || "auto",
+  };
+}
+
+/**
+ * Extracts Settings form values from FormData without silently coercing empty strings.
+ */
+export function extractSettingsFormValues(formData) {
+  const rawDl = formData.get("expectedDownload");
+  const rawUl = formData.get("expectedUpload");
+  const rawPing = formData.get("expectedPing");
+  const rawRetention = formData.get("retentionDays");
+
+  return {
+    cron: formData.get("cron") ?? "",
+    scheduleOffset: formData.has("scheduleOffset"),
+    paused: formData.has("paused"),
+    retentionDays: rawRetention !== "" && rawRetention != null ? Number(rawRetention) : "",
+    expectedMode: formData.get("expectedMode") || "auto",
+    expectedDownload: rawDl !== "" && rawDl != null ? Number(rawDl) : null,
+    expectedUpload: rawUl !== "" && rawUl != null ? Number(rawUl) : null,
+    expectedPing: rawPing !== "" && rawPing != null ? Number(rawPing) : null,
+  };
+}
+
+/**
+ * Handles Servers form submission. On success, updates state and calls onSaveSuccess (e.g. render).
+ * On failure, updates state banner and calls onSaveError (e.g. updateBanner) to preserve form inputs.
+ */
+export async function onServersSubmit(formData, appState, client, { t = (k) => k, onSaveSuccess, onSaveError } = {}) {
+  const formValues = extractServersFormValues(formData, appState?.config);
+  const result = await saveConfigDiff(appState?.config, formValues, client);
+  if (result.ok) {
+    if (appState) {
+      appState.config = { ...appState.config, ...formValues };
+      appState.banner = { kind: "info", text: t("settings.saveSuccess") || "Salvo com sucesso!" };
+    }
+    if (typeof onSaveSuccess === "function") {
+      onSaveSuccess(result);
+    }
+  } else {
+    if (appState) {
+      appState.banner = { kind: "error", text: result.error || "Erro ao salvar" };
+    }
+    if (typeof onSaveError === "function") {
+      onSaveError(result);
+    }
+  }
+  return result;
+}
+
+/**
+ * Handles Settings form submission. On success, updates state and calls onSaveSuccess (e.g. render).
+ * On failure, updates state banner and calls onSaveError (e.g. updateBanner) to preserve form inputs.
+ */
+export async function onSettingsSubmit(formData, appState, client, { t = (k) => k, onSaveSuccess, onSaveError, onLocaleChange } = {}) {
+  const formValues = extractSettingsFormValues(formData);
+  const newLocale = formData.get("locale");
+  if (newLocale && newLocale !== appState?.localePreference) {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("netrack_locale", newLocale);
+    }
+    if (typeof onLocaleChange === "function") {
+      await onLocaleChange(newLocale);
+    }
+  }
+
+  const result = await saveConfigDiff(appState?.config, formValues, client);
+  if (result.ok) {
+    if (appState) {
+      appState.config = { ...appState.config, ...formValues };
+      appState.banner = { kind: "info", text: t("settings.saveSuccess") || "Ajustes salvos com sucesso!" };
+    }
+    if (typeof onSaveSuccess === "function") {
+      onSaveSuccess(result);
+    }
+  } else {
+    if (appState) {
+      appState.banner = { kind: "error", text: result.error || "Erro ao salvar" };
+    }
+    if (typeof onSaveError === "function") {
+      onSaveError(result);
+    }
+  }
+  return result;
+}
+
+/**
  * Sets up global event delegation for clicks, submits, changes and hover tooltips.
  */
 function setupEventDelegation() {
@@ -508,21 +604,11 @@ function setupEventDelegation() {
     if (form.dataset.form === "servers") {
       e.preventDefault();
       const fd = new FormData(form);
-      const formValues = {
-        provider: fd.get("provider") || "cloudflare",
-        libreServerId: fd.get("libreServerId") || "auto",
-        libreUrl: fd.get("libreUrl") || "",
-        interface: fd.get("interface") || "auto",
-      };
-
-      const result = await saveConfigDiff(state.config, formValues, apiClient);
-      if (result.ok) {
-        state.config = { ...state.config, ...formValues };
-        state.banner = { kind: "info", text: t("settings.saveSuccess") || "Salvo com sucesso!" };
-      } else {
-        state.banner = { kind: "error", text: result.error || "Erro ao salvar" };
-      }
-      render();
+      await onServersSubmit(fd, state, apiClient, {
+        t,
+        onSaveSuccess: () => render(),
+        onSaveError: () => updateBanner(),
+      });
       return;
     }
 
@@ -530,35 +616,14 @@ function setupEventDelegation() {
     if (form.dataset.form === "settings") {
       e.preventDefault();
       const fd = new FormData(form);
-      const rawDl = fd.get("expectedDownload");
-      const rawUl = fd.get("expectedUpload");
-      const rawPing = fd.get("expectedPing");
-
-      const formValues = {
-        cron: fd.get("cron") || "0 * * * *",
-        scheduleOffset: fd.has("scheduleOffset"),
-        paused: fd.has("paused"),
-        retentionDays: Number(fd.get("retentionDays") || 365),
-        expectedMode: fd.get("expectedMode") || "auto",
-        expectedDownload: rawDl !== "" && rawDl != null ? Number(rawDl) : null,
-        expectedUpload: rawUl !== "" && rawUl != null ? Number(rawUl) : null,
-        expectedPing: rawPing !== "" && rawPing != null ? Number(rawPing) : null,
-      };
-
-      const newLocale = fd.get("locale");
-      if (newLocale && newLocale !== state.localePreference) {
-        localStorage.setItem("netrack_locale", newLocale);
-        await setupI18n();
-      }
-
-      const result = await saveConfigDiff(state.config, formValues, apiClient);
-      if (result.ok) {
-        state.config = { ...state.config, ...formValues };
-        state.banner = { kind: "info", text: t("settings.saveSuccess") || "Ajustes salvos com sucesso!" };
-      } else {
-        state.banner = { kind: "error", text: result.error || "Erro ao salvar" };
-      }
-      render();
+      await onSettingsSubmit(fd, state, apiClient, {
+        t,
+        onSaveSuccess: () => render(),
+        onSaveError: () => updateBanner(),
+        onLocaleChange: async () => {
+          await setupI18n();
+        },
+      });
       return;
     }
   });
