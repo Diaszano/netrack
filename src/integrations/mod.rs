@@ -3,7 +3,7 @@ pub mod routes;
 
 use std::time::Duration;
 
-use rusqlite::params;
+use rusqlite::{OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, watch};
@@ -167,66 +167,42 @@ impl IntegrationEvent {
     }
 }
 
+const INTEGRATION_COLUMNS: &str = "id, name, channel_type, config_json, events_json, enabled";
+
+fn map_integration(r: &Row) -> rusqlite::Result<Integration> {
+    let config_json: String = r.get(3)?;
+    let events_json: String = r.get(4)?;
+    let enabled: i64 = r.get(5)?;
+    Ok(Integration {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        channel_type: r.get(2)?,
+        config: serde_json::from_str(&config_json).unwrap_or(Value::Null),
+        events: serde_json::from_str(&events_json).unwrap_or_default(),
+        enabled: enabled != 0,
+    })
+}
+
 pub async fn list(db: &Db) -> anyhow::Result<Vec<Integration>> {
     db.call(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, name, channel_type, config_json, events_json, enabled FROM integrations ORDER BY id ASC",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            let id: i64 = r.get(0)?;
-            let name: String = r.get(1)?;
-            let channel_type: String = r.get(2)?;
-            let config_json: String = r.get(3)?;
-            let events_json: String = r.get(4)?;
-            let enabled: i64 = r.get(5)?;
-            Ok((id, name, channel_type, config_json, events_json, enabled))
-        })?;
-
-        let mut list = Vec::new();
-        for row in rows {
-            let (id, name, channel_type, config_json, events_json, enabled) = row?;
-            let config: Value = serde_json::from_str(&config_json).unwrap_or(Value::Null);
-            let events: Vec<String> = serde_json::from_str(&events_json).unwrap_or_default();
-            list.push(Integration {
-                id,
-                name,
-                channel_type,
-                config,
-                events,
-                enabled: enabled != 0,
-            });
-        }
-        Ok(list)
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {INTEGRATION_COLUMNS} FROM integrations ORDER BY id ASC"
+        ))?;
+        let rows = stmt.query_map([], map_integration)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     })
     .await
 }
 
 pub async fn get(db: &Db, id: i64) -> anyhow::Result<Option<Integration>> {
     db.call(move |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, name, channel_type, config_json, events_json, enabled FROM integrations WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query(params![id])?;
-        if let Some(r) = rows.next()? {
-            let id: i64 = r.get(0)?;
-            let name: String = r.get(1)?;
-            let channel_type: String = r.get(2)?;
-            let config_json: String = r.get(3)?;
-            let events_json: String = r.get(4)?;
-            let enabled: i64 = r.get(5)?;
-            let config: Value = serde_json::from_str(&config_json).unwrap_or(Value::Null);
-            let events: Vec<String> = serde_json::from_str(&events_json).unwrap_or_default();
-            Ok(Some(Integration {
-                id,
-                name,
-                channel_type,
-                config,
-                events,
-                enabled: enabled != 0,
-            }))
-        } else {
-            Ok(None)
-        }
+        Ok(conn
+            .query_row(
+                &format!("SELECT {INTEGRATION_COLUMNS} FROM integrations WHERE id = ?1"),
+                params![id],
+                map_integration,
+            )
+            .optional()?)
     })
     .await
 }
