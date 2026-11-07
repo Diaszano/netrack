@@ -1,7 +1,7 @@
 mod support;
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use futures::FutureExt;
@@ -130,6 +130,38 @@ async fn all_streams_failing_is_error() {
         }
         other => panic!("expected AllStreamsFailed, got {other:?}"),
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn empty_responses_are_failures_and_back_off() {
+    let mock = spawn_mock().await;
+    let client = reqwest::Client::new();
+    let url = format!("{}/empty", mock.base_url);
+    let requests = Arc::new(AtomicUsize::new(0));
+    let factory: StreamFactory = {
+        let requests = requests.clone();
+        Arc::new(move |counter: Arc<AtomicU64>| {
+            let (client, url, requests) = (client.clone(), url.clone(), requests.clone());
+            async move {
+                requests.fetch_add(1, Ordering::SeqCst);
+                let resp = client
+                    .get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| MeasureError::Http(e.to_string()))?;
+                drain_counting(resp, &counter).await
+            }
+            .boxed()
+        })
+    };
+    let result = measure_throughput(&short_cfg(), factory).await;
+    assert!(
+        matches!(result, Err(MeasureError::AllStreamsFailed(_))),
+        "expected AllStreamsFailed, got {result:?}"
+    );
+    // 4 streams retrying every 100 ms for 2 s is ~80 requests.
+    let n = requests.load(Ordering::SeqCst);
+    assert!(n < 200, "empty responses hammered the server: {n} requests");
 }
 
 #[tokio::test(flavor = "multi_thread")]

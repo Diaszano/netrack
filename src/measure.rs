@@ -100,7 +100,8 @@ pub fn latency_stats(samples_ms: &[f64]) -> Option<LatencyStats> {
 }
 
 /// Reads a response body chunk by chunk, adding each chunk's length to
-/// `counter` without buffering the body. Non-2xx statuses are errors.
+/// `counter` without buffering the body. Non-2xx statuses and empty bodies
+/// are errors, so the engine backs off instead of re-requesting at once.
 pub async fn drain_counting(
     resp: reqwest::Response,
     counter: &AtomicU64,
@@ -109,9 +110,14 @@ pub async fn drain_counting(
         .error_for_status()
         .map_err(|e| MeasureError::Http(e.to_string()))?;
     let mut body = resp.bytes_stream();
+    let mut total = 0;
     while let Some(chunk) = body.next().await {
         let chunk = chunk.map_err(|e| MeasureError::Http(e.to_string()))?;
         counter.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+        total += chunk.len();
+    }
+    if total == 0 {
+        return Err(MeasureError::Http("empty response body".into()));
     }
     Ok(())
 }
