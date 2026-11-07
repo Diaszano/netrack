@@ -654,3 +654,30 @@ async fn cookie_and_bearer_password_from_old_primary_is_accepted() {
         .await;
     assert_eq!(status, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn delete_expired_sessions_removes_only_expired() {
+    let app = TestApp::new().await;
+    let now = chrono::Utc::now().timestamp();
+    app.db
+        .call(move |conn| {
+            conn.execute(
+                "INSERT INTO sessions (token, created_at, expires_at) VALUES ('old', ?1, ?2), ('new', ?1, ?3)",
+                rusqlite::params![now - 10, now - 1, now + 3600],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let n = netrack::auth::delete_expired_sessions(&app.db, now)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    let left: i64 = app
+        .db
+        .call(|conn| Ok(conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?))
+        .await
+        .unwrap();
+    assert_eq!(left, 1);
+}

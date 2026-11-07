@@ -234,6 +234,7 @@ async fn purge(db: &Db, now: DateTime<Utc>) -> anyhow::Result<()> {
     if removed > 0 {
         tracing::info!(removed, "retention removed old speed tests");
     }
+    crate::auth::delete_expired_sessions(db, now.timestamp()).await?;
     Ok(())
 }
 

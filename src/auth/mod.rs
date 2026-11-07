@@ -116,6 +116,18 @@ pub async fn delete_session(db: &Db, token: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub async fn delete_expired_sessions(db: &Db, now_secs: i64) -> anyhow::Result<usize> {
+    let n = db
+        .call(move |conn| {
+            Ok(conn.execute(
+                "DELETE FROM sessions WHERE expires_at <= ?1",
+                rusqlite::params![now_secs],
+            )?)
+        })
+        .await?;
+    Ok(n)
+}
+
 pub async fn delete_all_sessions(db: &Db) -> anyhow::Result<()> {
     db.call(|conn| {
         conn.execute("DELETE FROM sessions", [])?;
