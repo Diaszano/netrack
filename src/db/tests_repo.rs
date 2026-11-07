@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use rusqlite::{OptionalExtension, Row, params};
 use serde::Serialize;
 
@@ -197,4 +197,14 @@ pub async fn last_successful(db: &Db, n: u32) -> anyhow::Result<Vec<SpeedtestRow
         Ok(rows)
     })
     .await
+}
+
+/// `created_at` of the newest stored test, if any.
+pub async fn newest_created_at(db: &Db) -> anyhow::Result<Option<DateTime<Utc>>> {
+    let ms: Option<i64> = db
+        .call(
+            |conn| Ok(conn.query_row("SELECT MAX(created_at) FROM speedtests", [], |r| r.get(0))?),
+        )
+        .await?;
+    Ok(ms.and_then(|ms| Utc.timestamp_millis_opt(ms).single()))
 }

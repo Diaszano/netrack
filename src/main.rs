@@ -2,11 +2,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context;
+use chrono::Utc;
 use netrack::api::{AppState, router};
 use netrack::db::Db;
 use netrack::db::tests_repo::TestKind;
 use netrack::runner::{RunError, Runner};
-use netrack::scheduler::Scheduler;
+use netrack::scheduler::{Clock, Scheduler, wait_for_clock_past_history};
 use netrack::settings::Settings;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
@@ -36,8 +37,9 @@ async fn main() -> anyhow::Result<()> {
     let scheduler = Arc::new(Scheduler::spawn(db.clone(), runner.clone(), reload_rx));
 
     if settings.run_on_startup {
-        let runner = runner.clone();
+        let (runner, db) = (runner.clone(), db.clone());
         tokio::spawn(async move {
+            wait_for_clock_past_history(&db, &(Arc::new(Utc::now) as Clock)).await;
             match runner.run(TestKind::Auto).await {
                 Ok(_) => {}
                 Err(RunError::Busy) => tracing::info!("startup test skipped: already running"),

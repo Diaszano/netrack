@@ -11,7 +11,7 @@ use netrack::db::config;
 use netrack::db::tests_repo::{self, Metrics, NewSpeedtest, TestKind};
 use netrack::providers::{Measurement, ProviderError, RunOptions, SpeedProvider};
 use netrack::runner::{ProviderFactory, Runner};
-use netrack::scheduler::{Clock, Scheduler, next_fire};
+use netrack::scheduler::{Clock, Scheduler, next_fire, wait_for_clock_past_history};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use tokio::sync::watch;
@@ -278,6 +278,62 @@ async fn transient_load_error_recovers_via_retry() {
     raw_set(&db, "paused", "false").await; // healed, no reload signalled
     advance(100).await;
     assert!(calls.load(Ordering::SeqCst) >= 1);
+}
+
+fn ok_test() -> NewSpeedtest {
+    NewSpeedtest {
+        kind: TestKind::Auto,
+        provider: "fake".into(),
+        server_id: None,
+        server_name: None,
+        server_host: None,
+        result_id: None,
+        metrics: Ok(Metrics {
+            ping: 1.0,
+            jitter: 1.0,
+            download: 1.0,
+            upload: 1.0,
+        }),
+        duration: 1.0,
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn waits_for_clock_to_pass_newest_row() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (db, runner) = setup(&calls).await;
+    config::set(&db, "cron", "* * * * *").await.unwrap();
+    config::set(&db, "schedule_offset", "false").await.unwrap();
+    tests_repo::insert(&db, ok_test(), utc("2026-03-10T11:00:00Z"))
+        .await
+        .unwrap();
+    // Booted without RTC: the clock is an hour behind the newest row.
+    let tc = TestClock::new("2026-03-10T10:00:10Z");
+    let (_tx, rx) = watch::channel(());
+    let sched = Scheduler::spawn_with_clock(db.clone(), runner, rx, tc.clock());
+
+    advance(600).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(sched.next_run().is_none());
+
+    // NTP syncs: now 11:10:10, past the newest row.
+    tc.step(chrono::Duration::hours(1));
+    advance(100).await;
+    assert!(calls.load(Ordering::SeqCst) >= 1);
+    assert!(sched.next_run().is_some());
+}
+
+#[tokio::test(start_paused = true)]
+async fn wait_for_clock_returns_at_once_without_history() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (db, _runner) = setup(&calls).await;
+    let tc = TestClock::new("2026-03-10T10:00:10Z");
+    tokio::time::timeout(
+        Duration::from_millis(1),
+        wait_for_clock_past_history(&db, &tc.clock()),
+    )
+    .await
+    .expect("no rows: no wait");
 }
 
 #[tokio::test]

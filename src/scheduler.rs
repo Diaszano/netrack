@@ -17,6 +17,8 @@ const MAX_OFFSET: Duration = Duration::from_secs(300);
 /// Longest single sleep, so wall-clock steps (NTP, fake-hwclock) are noticed.
 const MAX_SLEEP: Duration = Duration::from_secs(30);
 const RETRY_DELAY: Duration = Duration::from_secs(60);
+/// How often [`wait_for_clock_past_history`] re-reads the clock.
+const CLOCK_POLL: Duration = Duration::from_secs(30);
 const RETENTION_CRON: &str = "0 3 * * *";
 
 /// Next cron occurrence strictly after `after`, in the timezone of `after`.
@@ -133,6 +135,7 @@ async fn schedule_loop(
     shared: Arc<Mutex<Option<DateTime<Utc>>>>,
     clock: Clock,
 ) {
+    wait_for_clock_past_history(&db, &clock).await;
     loop {
         let planned = plan(&db, clock()).await;
         let target = match &planned {
@@ -232,4 +235,31 @@ async fn purge(db: &Db, now: DateTime<Utc>) -> anyhow::Result<()> {
         tracing::info!(removed, "retention removed old speed tests");
     }
     Ok(())
+}
+
+/// Waits until the wall clock is past the newest stored test. On a board
+/// without RTC the clock can boot far behind until NTP syncs; tests run then
+/// would be stored (and scheduled) at wrong times. Polls every
+/// [`CLOCK_POLL`]; returns at once with no history or if it cannot be read.
+pub async fn wait_for_clock_past_history(db: &Db, clock: &Clock) {
+    let newest = match tests_repo::newest_created_at(db).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot read newest test time; not waiting for clock");
+            return;
+        }
+    };
+    let mut logged = false;
+    while clock() < newest {
+        if !logged {
+            tracing::info!(
+                now = %clock(),
+                newest = %newest,
+                "clock is behind the newest stored test; waiting for time sync"
+            );
+            logged = true;
+        }
+        tokio::time::sleep(CLOCK_POLL).await;
+    }
 }
