@@ -1,5 +1,6 @@
 pub mod config;
 mod migrations;
+pub mod tests_repo;
 
 use std::{
     path::Path,
