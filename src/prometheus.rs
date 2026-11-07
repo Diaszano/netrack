@@ -70,72 +70,51 @@ fn format_labels(row: &SpeedtestRow) -> String {
 }
 
 pub fn format_metrics(latest: Option<&SpeedtestRow>) -> String {
+    type Family = (&'static str, &'static str, fn(&SpeedtestRow) -> String);
+    let families: [Family; 7] = [
+        (
+            "netrack_ping_latency_ms",
+            "Ping latency in milliseconds",
+            |r| r.ping.unwrap_or(0.0).to_string(),
+        ),
+        ("netrack_jitter_ms", "Jitter in milliseconds", |r| {
+            r.jitter.unwrap_or(0.0).to_string()
+        }),
+        (
+            "netrack_download_speed_mbps",
+            "Download speed in megabits per second",
+            |r| r.download.unwrap_or(0.0).to_string(),
+        ),
+        (
+            "netrack_upload_speed_mbps",
+            "Upload speed in megabits per second",
+            |r| r.upload.unwrap_or(0.0).to_string(),
+        ),
+        (
+            "netrack_test_duration_seconds",
+            "Duration of the speed test in seconds",
+            |r| r.duration.unwrap_or(0.0).to_string(),
+        ),
+        (
+            "netrack_last_test_timestamp_seconds",
+            "Timestamp of the last speed test in seconds",
+            |r| (r.created_at / 1000).to_string(),
+        ),
+        (
+            "netrack_test_success",
+            "Whether the last speed test succeeded (1) or failed (0)",
+            |r| if r.error.is_none() { "1" } else { "0" }.to_string(),
+        ),
+    ];
+
     let mut out = String::new();
-
-    out.push_str("# HELP netrack_ping_latency_ms Ping latency in milliseconds\n");
-    out.push_str("# TYPE netrack_ping_latency_ms gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.ping.unwrap_or(0.0);
-        out.push_str(&format!("netrack_ping_latency_ms{{{labels}}} {val}\n"));
+    for (name, help, value) in families {
+        out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} gauge\n"));
+        if let Some(row) = latest {
+            let labels = format_labels(row);
+            out.push_str(&format!("{name}{{{labels}}} {}\n", value(row)));
+        }
     }
-
-    out.push_str("# HELP netrack_jitter_ms Jitter in milliseconds\n");
-    out.push_str("# TYPE netrack_jitter_ms gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.jitter.unwrap_or(0.0);
-        out.push_str(&format!("netrack_jitter_ms{{{labels}}} {val}\n"));
-    }
-
-    out.push_str("# HELP netrack_download_speed_mbps Download speed in megabits per second\n");
-    out.push_str("# TYPE netrack_download_speed_mbps gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.download.unwrap_or(0.0);
-        out.push_str(&format!("netrack_download_speed_mbps{{{labels}}} {val}\n"));
-    }
-
-    out.push_str("# HELP netrack_upload_speed_mbps Upload speed in megabits per second\n");
-    out.push_str("# TYPE netrack_upload_speed_mbps gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.upload.unwrap_or(0.0);
-        out.push_str(&format!("netrack_upload_speed_mbps{{{labels}}} {val}\n"));
-    }
-
-    out.push_str("# HELP netrack_test_duration_seconds Duration of the speed test in seconds\n");
-    out.push_str("# TYPE netrack_test_duration_seconds gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.duration.unwrap_or(0.0);
-        out.push_str(&format!(
-            "netrack_test_duration_seconds{{{labels}}} {val}\n"
-        ));
-    }
-
-    out.push_str(
-        "# HELP netrack_last_test_timestamp_seconds Timestamp of the last speed test in seconds\n",
-    );
-    out.push_str("# TYPE netrack_last_test_timestamp_seconds gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.created_at / 1000;
-        out.push_str(&format!(
-            "netrack_last_test_timestamp_seconds{{{labels}}} {val}\n"
-        ));
-    }
-
-    out.push_str(
-        "# HELP netrack_test_success Whether the last speed test succeeded (1) or failed (0)\n",
-    );
-    out.push_str("# TYPE netrack_test_success gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = if row.error.is_none() { 1 } else { 0 };
-        out.push_str(&format!("netrack_test_success{{{labels}}} {val}\n"));
-    }
-
     out
 }
 
