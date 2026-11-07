@@ -48,7 +48,7 @@ pub struct SpeedtestRow {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct Metrics {
     pub ping: f64,
     pub jitter: f64,
