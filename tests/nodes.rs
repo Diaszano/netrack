@@ -311,6 +311,9 @@ async fn test_node_crud_and_validation() {
     assert_eq!(fetched["id"], id);
     assert_eq!(fetched["name"], "Node Alpha");
     assert_eq!(fetched["hasPassword"], true);
+    assert!(fetched["createdAt"].is_number());
+    assert!(fetched.get("has_password").is_none());
+    assert!(fetched.get("created_at").is_none());
     assert!(fetched.get("password").is_none() || fetched["password"].is_null());
 
     // 6. Update node name and clear password

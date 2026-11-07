@@ -143,7 +143,7 @@ export function renderOverview(state, { t = (k) => k } = {}) {
     tableRowsHtml = `<tr><td colspan="6" style="text-align: center; padding: 24px; color: var(--secondary);">${escapeHtml(emptyText)}</td></tr>`;
   } else {
     tableRowsHtml = recentRows.map((row) => {
-      const timeMs = row.createdAt ?? row.created_at ?? row.t;
+      const timeMs = row.createdAt ?? row.t;
       const timeStr = formatDateTime(timeMs, locale, tz);
 
       const isFailed = Boolean(row.error);
@@ -153,8 +153,8 @@ export function renderOverview(state, { t = (k) => k } = {}) {
 
       // Provider & Server
       const provider = row.provider ? escapeHtml(row.provider) : "—";
-      const serverName = (row.serverName ?? row.server_name) ? escapeHtml(row.serverName ?? row.server_name) : "";
-      const serverHost = (row.serverHost ?? row.server_host) ? escapeHtml(row.serverHost ?? row.server_host) : "";
+      const serverName = row.serverName ? escapeHtml(row.serverName) : "";
+      const serverHost = row.serverHost ? escapeHtml(row.serverHost) : "";
       let serverSub = "";
       if (serverName && serverHost) {
         serverSub = `${serverName} (${serverHost})`;

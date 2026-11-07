@@ -97,7 +97,7 @@ export function renderStatistics(state, { t = (k) => k } = {}) {
       const minVal = m.min != null && Number.isFinite(m.min) ? formatMetric(m.min, locale, key) : "—";
       const maxVal = m.max != null && Number.isFinite(m.max) ? formatMetric(m.max, locale, key) : "—";
 
-      const std = m.stdDev ?? m.std_dev;
+      const std = m.stdDev;
       const stdVal = std != null && Number.isFinite(std) ? formatMetric(std, locale, key) : "—";
 
       let consistencyVal = "—";

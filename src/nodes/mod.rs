@@ -1,8 +1,7 @@
 pub mod routes;
 
 use rusqlite::params;
-use serde::ser::SerializeMap;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
 use crate::db::tests_repo::SpeedtestRow;
@@ -16,7 +15,8 @@ pub struct Node {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct NodeResponse {
     pub id: i64,
     pub name: String,
@@ -40,45 +40,14 @@ impl From<Node> for NodeResponse {
     }
 }
 
-impl Serialize for NodeResponse {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(Some(7))?;
-        map.serialize_entry("id", &self.id)?;
-        map.serialize_entry("name", &self.name)?;
-        map.serialize_entry("url", &self.url)?;
-        map.serialize_entry("hasPassword", &self.has_password)?;
-        map.serialize_entry("has_password", &self.has_password)?;
-        map.serialize_entry("createdAt", &self.created_at)?;
-        map.serialize_entry("created_at", &self.created_at)?;
-        map.end()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct NodeStatusResponse {
     pub online: bool,
     pub version: Option<String>,
     #[serde(alias = "latest_test")]
     pub latest_test: Option<SpeedtestRow>,
     pub error: Option<String>,
-}
-
-impl Serialize for NodeStatusResponse {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(Some(5))?;
-        map.serialize_entry("online", &self.online)?;
-        map.serialize_entry("version", &self.version)?;
-        map.serialize_entry("latestTest", &self.latest_test)?;
-        map.serialize_entry("latest_test", &self.latest_test)?;
-        map.serialize_entry("error", &self.error)?;
-        map.end()
-    }
 }
 
 pub async fn list(db: &Db) -> anyhow::Result<Vec<Node>> {

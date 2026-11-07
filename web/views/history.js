@@ -36,7 +36,7 @@ export function renderHistory(state, { t = (k) => k } = {}) {
   } else {
     tableRowsHtml = rows
       .map((row) => {
-        const timeMs = row.createdAt ?? row.created_at ?? row.t;
+        const timeMs = row.createdAt ?? row.t;
         const timeStr = formatDateTime(timeMs, locale, tz);
 
         // Kind badge: auto vs custom (manual)
@@ -49,8 +49,8 @@ export function renderHistory(state, { t = (k) => k } = {}) {
 
         // Provider & Server
         const provider = row.provider ? escapeHtml(row.provider) : "—";
-        const serverName = (row.serverName ?? row.server_name) ? escapeHtml(row.serverName ?? row.server_name) : "";
-        const serverHost = (row.serverHost ?? row.server_host) ? escapeHtml(row.serverHost ?? row.server_host) : "";
+        const serverName = row.serverName ? escapeHtml(row.serverName) : "";
+        const serverHost = row.serverHost ? escapeHtml(row.serverHost) : "";
         let serverSub = "";
         if (serverName && serverHost) {
           serverSub = `${serverName} (${serverHost})`;

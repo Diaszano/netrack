@@ -150,7 +150,7 @@ export function renderNodes(state, { t = (k) => k } = {}) {
         const st = statuses[node.id] || {};
         const isOnline = Boolean(st.online);
         const isNodeActive = String(activeNodeId) === String(node.id);
-        const latest = st.latestTest || st.latest_test || null;
+        const latest = st.latestTest || null;
 
         const statusBadge = isOnline
           ? `<span class="badge badge-ok">${escapeHtml(t("common.online") || "online")}</span>`
