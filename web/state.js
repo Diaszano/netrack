@@ -146,3 +146,11 @@ export function parseRoute(pathname) {
 
   return "overview";
 }
+
+/**
+ * Anonymous visitors of a public-mode dashboard get 401 from /api/nodes;
+ * skip the call so the login modal does not open on page load.
+ */
+export function shouldLoadNodes(auth) {
+  return !(auth.mode === "public" && !auth.authenticated);
+}

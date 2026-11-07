@@ -2,7 +2,7 @@
 // Netrack web application wiring: router, event delegation, live SSE and polling
 
 import { createApiClient } from "./api.js";
-import { createInitialState, applyRunEvent, parseRoute } from "./state.js";
+import { createInitialState, applyRunEvent, parseRoute, shouldLoadNodes } from "./state.js";
 import { resolveLocale, createTranslator, escapeHtml } from "./i18n.js";
 import { formatBytes, formatNumber, formatDateTime, dateRangeForPreset } from "./format.js";
 import { renderOverview } from "./views/overview.js";
@@ -1319,7 +1319,7 @@ async function main() {
     apiClient.getSystemStatus().catch(() => null),
     apiClient.getStatus().catch(() => null),
     apiClient.getConfig().catch(() => null),
-    apiClient.listNodes().catch(() => []),
+    shouldLoadNodes(state.auth) ? apiClient.listNodes().catch(() => []) : [],
   ]);
 
   if (sys) state.system = sys;
