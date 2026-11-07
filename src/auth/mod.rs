@@ -166,6 +166,11 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
         return next.run(req).await;
     }
 
+    let cfg = match config::load(&state.db).await {
+        Ok(c) => c,
+        Err(e) => return ApiError::from(e).into_response(),
+    };
+
     let cookie_token = req
         .headers()
         .get(header::COOKIE)
@@ -186,10 +191,7 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
     // Only a Bearer token may be the raw password; a stale cookie must not cost Argon2.
     if !authenticated && let Some(t) = &bearer_token {
         authenticated = validate_session(&state.db, t).await.unwrap_or(false);
-        if !authenticated
-            && let Ok(cfg) = config::load(&state.db).await
-            && cfg.password_mode != PasswordMode::None
-        {
+        if !authenticated && cfg.password_mode != PasswordMode::None {
             authenticated = verify_password_async(t.clone(), cfg.password_hash.clone()).await;
         }
     }
@@ -207,10 +209,6 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
         return next.run(req).await;
     }
 
-    let cfg = match config::load(&state.db).await {
-        Ok(c) => c,
-        Err(e) => return ApiError::from(e).into_response(),
-    };
     match cfg.password_mode {
         PasswordMode::None => next.run(req).await,
         PasswordMode::Public => {
