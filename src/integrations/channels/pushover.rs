@@ -38,6 +38,10 @@ pub async fn send(
                 metrics.download, metrics.upload, metrics.ping
             ),
         ),
+        IntegrationEvent::SpeedtestDegraded { .. } => (
+            "Speedtest degraded".to_string(),
+            event.degraded_summary().unwrap_or_default(),
+        ),
         IntegrationEvent::SpeedtestFailed { error, .. } => {
             ("Speedtest failed".to_string(), format!("Error: {error}"))
         }

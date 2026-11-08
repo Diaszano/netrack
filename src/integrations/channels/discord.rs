@@ -54,6 +54,12 @@ pub async fn send(
                 f,
             )
         }
+        IntegrationEvent::SpeedtestDegraded { .. } => (
+            "Speedtest degraded".to_string(),
+            event.degraded_summary().unwrap_or_default(),
+            0xFFB020, // Amber
+            vec![],
+        ),
         IntegrationEvent::SpeedtestFailed { error, .. } => (
             "Speedtest failed".to_string(),
             format!("Error: {error}"),

@@ -33,6 +33,11 @@ pub async fn send(
             ),
             vec!["rocket", "white_check_mark"],
         ),
+        IntegrationEvent::SpeedtestDegraded { .. } => (
+            "Speedtest degraded".to_string(),
+            event.degraded_summary().unwrap_or_default(),
+            vec!["warning", "snail"],
+        ),
         IntegrationEvent::SpeedtestFailed { error, .. } => (
             "Speedtest failed".to_string(),
             format!("Error: {error}"),

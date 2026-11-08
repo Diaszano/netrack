@@ -27,6 +27,7 @@ pub const SUPPORTED_EVENTS: &[&str] = &[
     "speedtest.started",
     "speedtest.finished",
     "speedtest.failed",
+    "speedtest.degraded",
     "minute.passed",
     "config.updated",
     "expected.updated",
@@ -57,6 +58,14 @@ pub enum IntegrationEvent {
         provider: Option<String>,
         timestamp: i64,
     },
+    SpeedtestDegraded {
+        id: i64,
+        metrics: Metrics,
+        expected_download: f64,
+        expected_upload: f64,
+        threshold_pct: u32,
+        timestamp: i64,
+    },
     SpeedtestFailed {
         id: Option<i64>,
         error: String,
@@ -84,6 +93,7 @@ impl IntegrationEvent {
         match self {
             IntegrationEvent::SpeedtestStarted { .. } => "speedtest.started",
             IntegrationEvent::SpeedtestFinished { .. } => "speedtest.finished",
+            IntegrationEvent::SpeedtestDegraded { .. } => "speedtest.degraded",
             IntegrationEvent::SpeedtestFailed { .. } => "speedtest.failed",
             IntegrationEvent::MinutePassed { .. } => "minute.passed",
             IntegrationEvent::ConfigUpdated { .. } => "config.updated",
@@ -92,10 +102,29 @@ impl IntegrationEvent {
         }
     }
 
+    /// Human-readable summary of a degraded test, shared by the chat channels.
+    pub fn degraded_summary(&self) -> Option<String> {
+        let IntegrationEvent::SpeedtestDegraded {
+            metrics,
+            expected_download,
+            expected_upload,
+            threshold_pct,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        Some(format!(
+            "↓ {:.2} Mbps (expected {expected_download:.2}) / ↑ {:.2} Mbps (expected {expected_upload:.2}), below {threshold_pct}%",
+            metrics.download, metrics.upload
+        ))
+    }
+
     pub fn timestamp(&self) -> i64 {
         match self {
             IntegrationEvent::SpeedtestStarted { timestamp, .. } => *timestamp,
             IntegrationEvent::SpeedtestFinished { timestamp, .. } => *timestamp,
+            IntegrationEvent::SpeedtestDegraded { timestamp, .. } => *timestamp,
             IntegrationEvent::SpeedtestFailed { timestamp, .. } => *timestamp,
             IntegrationEvent::MinutePassed { timestamp, .. } => *timestamp,
             IntegrationEvent::ConfigUpdated { timestamp, .. } => *timestamp,
@@ -132,6 +161,29 @@ impl IntegrationEvent {
                         "host": server_host,
                     },
                     "provider": provider,
+                })
+            }
+            IntegrationEvent::SpeedtestDegraded {
+                id,
+                metrics,
+                expected_download,
+                expected_upload,
+                threshold_pct,
+                ..
+            } => {
+                json!({
+                    "id": id,
+                    "metrics": {
+                        "download": metrics.download,
+                        "upload": metrics.upload,
+                        "ping": metrics.ping,
+                        "jitter": metrics.jitter,
+                    },
+                    "expected": {
+                        "download": expected_download,
+                        "upload": expected_upload,
+                    },
+                    "thresholdPct": threshold_pct,
                 })
             }
             IntegrationEvent::SpeedtestFailed { id, error, .. } => {
@@ -390,6 +442,21 @@ impl IntegrationDispatcher {
                                             server_id,
                                             server_host,
                                             provider,
+                                            timestamp: now,
+                                        };
+                                        dispatch_event(&self.db, &self.client, &ev).await;
+                                    }
+                                    RunEvent::Degraded { id, metrics, expected_download, expected_upload } => {
+                                        let threshold_pct = match crate::db::config::load(&self.db).await {
+                                            Ok(cfg) => cfg.degraded_threshold_pct,
+                                            Err(_) => 70,
+                                        };
+                                        let ev = IntegrationEvent::SpeedtestDegraded {
+                                            id,
+                                            metrics,
+                                            expected_download,
+                                            expected_upload,
+                                            threshold_pct,
                                             timestamp: now,
                                         };
                                         dispatch_event(&self.db, &self.client, &ev).await;

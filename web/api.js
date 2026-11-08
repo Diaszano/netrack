@@ -19,6 +19,7 @@ export const CONFIG_KEY_MAP = {
   expectedPing: "expected_ping",
   expectedDownload: "expected_download",
   expectedUpload: "expected_upload",
+  degradedThresholdPct: "degraded_threshold_pct",
   libreServerId: "libre_server_id",
   libreUrl: "libre_url",
   ooklaServerId: "ookla_server_id",

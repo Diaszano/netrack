@@ -31,6 +31,13 @@ pub enum RunEvent {
         id: i64,
         metrics: Metrics,
     },
+    /// Emitted right after `Finished` when a metric is below the threshold.
+    Degraded {
+        id: i64,
+        metrics: Metrics,
+        expected_download: f64,
+        expected_upload: f64,
+    },
     /// `id` is `None` (serialized as `null`) when no row could be stored.
     Failed {
         id: Option<i64>,
@@ -176,7 +183,16 @@ impl Runner {
 
         match metrics {
             Ok(metrics) => {
+                let degraded = is_degraded(&metrics, cfg);
                 self.emit(RunEvent::Finished { id, metrics });
+                if degraded {
+                    self.emit(RunEvent::Degraded {
+                        id,
+                        metrics,
+                        expected_download: cfg.expected_download,
+                        expected_upload: cfg.expected_upload,
+                    });
+                }
                 if let Err(e) = self.update_expected().await {
                     tracing::warn!(error = %e, "failed to update expected values");
                 }
@@ -226,6 +242,14 @@ impl Runner {
     }
 }
 
+/// Below `degraded_threshold_pct` of the expected download or upload. An
+/// expected value of 0 (not set) never degrades that metric.
+pub fn is_degraded(m: &Metrics, cfg: &AppConfig) -> bool {
+    let limit = |expected: f64| expected * f64::from(cfg.degraded_threshold_pct) / 100.0;
+    (cfg.expected_download > 0.0 && m.download < limit(cfg.expected_download))
+        || (cfg.expected_upload > 0.0 && m.upload < limit(cfg.expected_upload))
+}
+
 fn metrics_of(m: &Measurement) -> Metrics {
     Metrics {
         ping: m.ping,
@@ -246,5 +270,55 @@ async fn attempt(
         Ok(Err(e)) => Err(e.to_string()),
         Err(join) if join.is_panic() => Err("provider panicked".to_owned()),
         Err(join) => Err(format!("provider task failed: {join}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(expected_download: f64, expected_upload: f64) -> AppConfig {
+        AppConfig {
+            provider: crate::db::config::Provider::Cloudflare,
+            cron: String::new(),
+            schedule_offset: false,
+            retention_days: 1,
+            expected_mode: ExpectedMode::Manual,
+            expected_ping: 0.0,
+            expected_download,
+            expected_upload,
+            degraded_threshold_pct: 70,
+            libre_server_id: None,
+            libre_url: None,
+            interface: None,
+            paused: false,
+            password_mode: crate::db::config::PasswordMode::None,
+            password_hash: String::new(),
+            ookla_license_agreed: false,
+            ookla_server_id: None,
+        }
+    }
+
+    fn m(download: f64, upload: f64) -> Metrics {
+        Metrics {
+            ping: 10.0,
+            jitter: 1.0,
+            download,
+            upload,
+        }
+    }
+
+    #[test]
+    fn degraded_below_threshold() {
+        assert!(is_degraded(&m(69.0, 50.0), &cfg(100.0, 50.0)));
+        assert!(is_degraded(&m(100.0, 34.0), &cfg(100.0, 50.0)));
+        assert!(!is_degraded(&m(70.0, 35.0), &cfg(100.0, 50.0)));
+    }
+
+    #[test]
+    fn unset_expected_never_degrades() {
+        assert!(!is_degraded(&m(1.0, 1.0), &cfg(0.0, 0.0)));
+        assert!(!is_degraded(&m(1.0, 50.0), &cfg(0.0, 50.0)));
+        assert!(is_degraded(&m(1.0, 1.0), &cfg(0.0, 50.0)));
     }
 }

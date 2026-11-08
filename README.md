@@ -14,9 +14,9 @@ Monitor de velocidade de internet auto-hospedado, escrito em Rust. Executa teste
   - Internacionalização automática (`pt-BR` e `en`) extensível via arquivos JSON em `web/locales/`.
 - **Segurança e Modos de Acesso**:
   - Níveis de proteção por senha (Argon2id + sessões em SQLite): `none` (sem senha), `public` (leitura pública, alterações protegidas) e `protected` (tudo exige login).
-- **Notificações e Integrações (8 canais × 6 eventos)**:
+- **Notificações e Integrações (8 canais × 7 eventos)**:
   - Canais: **Discord**, **Telegram**, **Pushover**, **Gotify**, **ntfy**, **Webhook genérico**, **InfluxDB v2** e **Healthchecks**.
-  - Eventos: `speedtest.started`, `speedtest.finished`, `speedtest.failed`, `minute.passed`, `config.updated`, `expected.updated`.
+  - Eventos: `speedtest.started`, `speedtest.finished`, `speedtest.failed`, `speedtest.degraded`, `minute.passed`, `config.updated`, `expected.updated`.
 - **Observabilidade e Dados**:
   - Endpoint **Prometheus** (`/api/prometheus/metrics`) com suporte a Basic Auth.
   - Exportação/importação em **JSON** e **CSV**, além de importação compatível com **MySpeed**.

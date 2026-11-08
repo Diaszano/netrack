@@ -544,6 +544,7 @@ export function extractSettingsFormValues(formData) {
   const rawUl = formData.get("expectedUpload");
   const rawPing = formData.get("expectedPing");
   const rawRetention = formData.get("retentionDays");
+  const rawPct = formData.get("degradedThresholdPct");
 
   return {
     cron: formData.get("cron") ?? "",
@@ -554,6 +555,7 @@ export function extractSettingsFormValues(formData) {
     expectedDownload: rawDl !== "" && rawDl != null ? Number(rawDl) : null,
     expectedUpload: rawUl !== "" && rawUl != null ? Number(rawUl) : null,
     expectedPing: rawPing !== "" && rawPing != null ? Number(rawPing) : null,
+    degradedThresholdPct: rawPct !== "" && rawPct != null ? Number(rawPct) : null,
   };
 }
 

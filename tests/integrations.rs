@@ -497,6 +497,47 @@ async fn dispatcher_handles_all_channel_types_on_runner_success() {
 }
 
 #[tokio::test]
+async fn dispatcher_delivers_degraded_event_to_webhook() {
+    let mock = MockServer::start().await;
+    let app = TestApp::new(false).await; // download 250
+    netrack::db::config::set(&app.db, "expected_download", "1000")
+        .await
+        .unwrap();
+    let dispatcher = IntegrationDispatcher::new(
+        app.db.clone(),
+        app.runner.subscribe(),
+        app.reload_tx.subscribe(),
+        reqwest::Client::new(),
+    );
+    dispatcher.spawn();
+
+    let (status, _) = app
+        .request(
+            Method::POST,
+            "/api/integrations",
+            Some(json!({
+                "name": "Degraded",
+                "channel_type": "webhook",
+                "config": {"url": format!("{}/webhook", mock.base_url())},
+                "events": ["speedtest.degraded"],
+                "enabled": true
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    app.runner.run(TestKind::Custom).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let recorded = mock.recorded();
+    assert_eq!(recorded.len(), 1);
+    let body: Value = serde_json::from_str(&recorded[0].body).unwrap();
+    assert_eq!(body["event"], "speedtest.degraded");
+    assert_eq!(body["data"]["expected"]["download"], 1000.0);
+    assert_eq!(body["data"]["thresholdPct"], 70);
+}
+
+#[tokio::test]
 async fn dispatcher_handles_failure_events_and_resilient_to_errors() {
     let mock = MockServer::start().await;
     let app = TestApp::new(true).await; // Failing provider
