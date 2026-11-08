@@ -68,7 +68,8 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState::new(db, runner, reload_tx, scheduler)
         .with_data_dir(settings.data_dir)
         .with_preview(settings.preview_mode, settings.preview_message)
-        .with_trust_proxy(settings.trust_proxy);
+        .with_trust_proxy(settings.trust_proxy)
+        .with_secure_cookie(settings.secure_cookie);
     let stop_state = state.clone();
     let stop_rx = state.shutdown.subscribe();
     let app = router(state);

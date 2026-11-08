@@ -71,9 +71,7 @@ async fn login(
     }
 
     let (token, expires_at) = create_session(&s.db).await?;
-    let cookie_val = format!(
-        "{SESSION_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_DURATION_SECS}"
-    );
+    let cookie_val = session_cookie(&token, SESSION_DURATION_SECS, s.secure_cookie);
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -84,6 +82,13 @@ async fn login(
     Ok((headers, Json(LoginResponse { token, expires_at })))
 }
 
+fn session_cookie(token: &str, max_age: i64, secure: bool) -> String {
+    let flag = if secure { "; Secure" } else { "" };
+    format!(
+        "{SESSION_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{flag}"
+    )
+}
+
 async fn logout(
     State(s): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -92,7 +97,7 @@ async fn logout(
         delete_session(&s.db, &token).await?;
     }
 
-    let cookie_val = format!("{SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+    let cookie_val = session_cookie("", 0, s.secure_cookie);
     let mut headers = HeaderMap::new();
     headers.insert(
         header::SET_COOKIE,

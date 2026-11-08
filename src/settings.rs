@@ -13,6 +13,7 @@ pub struct Settings {
     pub run_on_startup: bool,
     pub preview_mode: bool,
     pub trust_proxy: bool,
+    pub secure_cookie: bool,
     pub preview_message: Option<String>,
 }
 
@@ -62,6 +63,14 @@ impl Settings {
             },
             None => false,
         };
+        let secure_cookie = match vars.get("NETRACK_SECURE_COOKIE") {
+            Some(v) => match v.trim().to_ascii_lowercase().as_str() {
+                "true" | "1" => true,
+                "false" | "0" | "" => false,
+                _ => return Err(anyhow!("invalid NETRACK_SECURE_COOKIE: {v:?}")),
+            },
+            None => false,
+        };
         let preview_message = if preview_mode {
             let msg = vars
                 .get("PREVIEW_MESSAGE")
@@ -79,6 +88,7 @@ impl Settings {
             run_on_startup,
             preview_mode,
             trust_proxy,
+            secure_cookie,
             preview_message,
         })
     }

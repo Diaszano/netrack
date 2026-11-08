@@ -50,13 +50,16 @@ impl TestApp {
     }
 
     async fn with_trust_proxy(trust: bool) -> Self {
+        Self::build(|s| s.with_trust_proxy(trust)).await
+    }
+
+    async fn build(f: impl FnOnce(AppState) -> AppState) -> Self {
         let db = Db::open_in_memory(chrono_tz::Tz::UTC).await.unwrap();
         let factory: ProviderFactory = Arc::new(|_| Box::new(DummyProvider));
         let runner = Runner::new(db.clone(), factory);
         let (tx, rx) = watch::channel(());
         let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx);
-        let state =
-            AppState::new(db.clone(), runner, tx, Arc::new(scheduler)).with_trust_proxy(trust);
+        let state = f(AppState::new(db.clone(), runner, tx, Arc::new(scheduler)));
         let app = router(state);
         Self { app, db }
     }
@@ -859,4 +862,22 @@ async fn old_bearer_password_is_rejected_after_change() {
         )
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn secure_cookie_flag() {
+    for secure in [true, false] {
+        let app = TestApp::build(|s| s.with_secure_cookie(secure)).await;
+        for (method, uri) in [
+            (Method::POST, "/api/auth/login"),
+            (Method::POST, "/api/auth/logout"),
+        ] {
+            let (_, headers, _) = app
+                .request(method, uri, Some(json!({ "password": "" })), None, None)
+                .await;
+            let cookie = headers.get("set-cookie").unwrap().to_str().unwrap();
+            assert_eq!(cookie.ends_with("; Secure"), secure, "{uri}: {cookie}");
+            assert_eq!(cookie.contains("Secure"), secure, "{uri}: {cookie}");
+        }
+    }
 }
