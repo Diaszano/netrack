@@ -42,7 +42,7 @@ O container roda como UID 65534 (`nobody`). O diretório montado em `/data` prec
 | Variável | Padrão | Descrição |
 |---|---|---|
 | `NETRACK_PORT` | `5216` | Porta HTTP (escuta em `0.0.0.0` e `[::]`) |
-| `NETRACK_DATA_DIR` | `/data` | Diretório do banco SQLite e binário opcional do Ookla |
+| `NETRACK_DATA_DIR` | `/data` | Diretório do banco SQLite, binário opcional do Ookla e backups diários (`backups/netrack-AAAA-MM-DD.db`, quantidade em `backup_keep`) |
 | `NETRACK_TRUST_PROXY` | `false` | Usa o último IP de `X-Forwarded-For` (o anexado pelo proxy) como IP do cliente no bloqueio de login (5 falhas em 15 min). Ative só atrás de um proxy reverso confiável |
 | `NETRACK_SECURE_COOKIE` | `false` | Adiciona `Secure` ao cookie de sessão (login e logout). Ative só se o acesso for por HTTPS, senão o navegador descarta o cookie |
 | `TZ` | `UTC` | Fuso horário usado no agendamento e estatísticas (ex.: `America/Sao_Paulo`); vazio = `UTC` |

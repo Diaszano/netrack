@@ -197,6 +197,8 @@
   "settings.resetSuccess": "Banco de dados redefinido com sucesso!",
   "settings.resetTitle": "Redefinir banco de dados",
   "settings.retentionDays": "Retenção de dados (dias)",
+  "settings.backupKeep": "Backups diários mantidos",
+  "settings.backupKeepHelp": "0 desliga o backup diário do banco",
   "settings.retentionHelp": "Testes com mais tempo que este período serão excluídos automaticamente",
   "settings.savePassword": "Atualizar segurança",
   "settings.saveSuccess": "Ajustes salvos com sucesso!",

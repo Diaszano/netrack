@@ -197,6 +197,8 @@
   "settings.resetSuccess": "Database reset successfully!",
   "settings.resetTitle": "Reset database",
   "settings.retentionDays": "Data retention (days)",
+  "settings.backupKeep": "Daily backups to keep",
+  "settings.backupKeepHelp": "0 turns off the daily database backup",
   "settings.retentionHelp": "Tests older than this period will be automatically pruned",
   "settings.savePassword": "Update security",
   "settings.saveSuccess": "Settings saved successfully!",

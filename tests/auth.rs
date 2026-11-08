@@ -58,7 +58,12 @@ impl TestApp {
         let factory: ProviderFactory = Arc::new(|_| Box::new(DummyProvider));
         let runner = Runner::new(db.clone(), factory);
         let (tx, rx) = watch::channel(());
-        let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx);
+        let scheduler = Scheduler::spawn(
+            db.clone(),
+            runner.clone(),
+            rx,
+            tempfile::tempdir().unwrap().keep(),
+        );
         let state = f(AppState::new(db.clone(), runner, tx, Arc::new(scheduler)));
         let app = router(state);
         Self { app, db }

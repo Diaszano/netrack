@@ -290,6 +290,7 @@ mod tests {
             expected_download,
             expected_upload,
             degraded_threshold_pct: 70,
+            backup_keep: 7,
             libre_server_id: None,
             libre_url: None,
             interface: None,

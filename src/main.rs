@@ -38,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
         db.clone(),
         runner.clone(),
         reload_rx.clone(),
+        settings.data_dir.clone(),
     ));
 
     let http_client = reqwest::Client::builder()

@@ -133,6 +133,11 @@ export function renderSettings(state, { t = (k) => k, locales = [] } = {}) {
     <input id="setting-retention" type="number" name="retentionDays" min="1" max="10000" value="${escapeHtml(retentionVal)}" class="form-control" style="max-width: 200px;">
     <span class="form-help">${escapeHtml(t("settings.retentionHelp") || "Testes com mais tempo que este período serão excluídos automaticamente")}</span>
   </div>
+  <div class="form-group">
+    <label class="form-label" for="setting-backup-keep">${escapeHtml(t("settings.backupKeep") || "Backups diários mantidos")}</label>
+    <input id="setting-backup-keep" type="number" name="backupKeep" min="0" max="30" value="${escapeHtml(config.backupKeep ?? 7)}" class="form-control" style="max-width: 200px;">
+    <span class="form-help">${escapeHtml(t("settings.backupKeepHelp") || "0 desliga o backup diário do banco")}</span>
+  </div>
 </div>`;
 
   // 2. Plano / Valores esperados card (expectedMode, expectedDownload, expectedUpload, expectedPing)

@@ -131,7 +131,12 @@ impl TestApp {
         };
         let runner = Runner::new(db.clone(), factory);
         let (reload_tx, reload_rx) = watch::channel(());
-        let scheduler = Scheduler::spawn(db.clone(), runner.clone(), reload_rx);
+        let scheduler = Scheduler::spawn(
+            db.clone(),
+            runner.clone(),
+            reload_rx,
+            tempfile::tempdir().unwrap().keep(),
+        );
         let state = AppState::new(
             db.clone(),
             runner.clone(),

@@ -33,7 +33,12 @@ async fn setup_app() -> TestContext {
     let db = Db::open_in_memory(chrono_tz::Tz::UTC).await.unwrap();
     let runner = Runner::with_default_providers(db.clone());
     let (tx, rx) = watch::channel(());
-    let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx);
+    let scheduler = Scheduler::spawn(
+        db.clone(),
+        runner.clone(),
+        rx,
+        tempfile::tempdir().unwrap().keep(),
+    );
     let state = AppState::new(db.clone(), runner.clone(), tx, Arc::new(scheduler))
         .with_data_dir(data_dir.path());
     let app = router(state.clone());
@@ -147,7 +152,12 @@ async fn ookla_install_downloads_and_unpacks_tgz() {
     let db = Db::open_in_memory(chrono_tz::Tz::UTC).await.unwrap();
     let runner = Runner::with_default_providers(db.clone());
     let (tx, rx) = watch::channel(());
-    let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx);
+    let scheduler = Scheduler::spawn(
+        db.clone(),
+        runner.clone(),
+        rx,
+        tempfile::tempdir().unwrap().keep(),
+    );
     let state = AppState::new(db.clone(), runner.clone(), tx, Arc::new(scheduler))
         .with_data_dir(data_dir.path())
         .with_ookla_download_url(format!("http://127.0.0.1:{port}/speedtest.tgz"));
