@@ -876,8 +876,11 @@ async fn secure_cookie_flag() {
                 .request(method, uri, Some(json!({ "password": "" })), None, None)
                 .await;
             let cookie = headers.get("set-cookie").unwrap().to_str().unwrap();
-            assert_eq!(cookie.ends_with("; Secure"), secure, "{uri}: {cookie}");
-            assert_eq!(cookie.contains("Secure"), secure, "{uri}: {cookie}");
+            if secure {
+                assert!(cookie.ends_with("; Secure"), "{uri}: {cookie}");
+            } else {
+                assert!(!cookie.contains("Secure"), "{uri}: {cookie}");
+            }
         }
     }
 }
