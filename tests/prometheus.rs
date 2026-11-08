@@ -582,8 +582,8 @@ async fn prometheus_metrics_24h_aggregates() {
     }
     let (_, _, body) = app.get("/api/prometheus/metrics", None, None).await;
     assert!(body.contains("netrack_download_avg_24h_mbps 150\n"));
-    assert!(body.contains("netrack_tests_24h_total{result=\"ok\"} 2\n"));
-    assert!(body.contains("netrack_tests_24h_total{result=\"failed\"} 1\n"));
+    assert!(body.contains("netrack_tests_24h{result=\"ok\"} 2\n"));
+    assert!(body.contains("netrack_tests_24h{result=\"failed\"} 1\n"));
 }
 
 #[tokio::test]
@@ -594,8 +594,9 @@ async fn prometheus_metrics_24h_empty_has_no_samples() {
         "netrack_download_avg_24h_mbps",
         "netrack_upload_avg_24h_mbps",
         "netrack_ping_avg_24h_ms",
-        "netrack_tests_24h_total",
+        "netrack_tests_24h",
     ] {
+        assert!(body.contains(&format!("# HELP {n} ")));
         assert!(body.contains(&format!("# TYPE {n} gauge")));
         assert!(
             !body

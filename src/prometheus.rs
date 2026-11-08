@@ -142,7 +142,7 @@ pub fn format_metrics(latest: Option<&SpeedtestRow>, window: &Window24h) -> Stri
         }
     }
 
-    let name = "netrack_tests_24h_total";
+    let name = "netrack_tests_24h";
     out.push_str(&format!(
         "# HELP {name} Number of speed tests in the last 24 hours by result\n# TYPE {name} gauge\n"
     ));
