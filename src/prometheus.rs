@@ -4,10 +4,12 @@ use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use chrono::{Duration, Utc};
 
 use crate::api::{ApiError, AppState};
 use crate::auth::{AuthContext, PasswordCheck, check_password, client_ip};
 use crate::db::config::{self, PasswordMode};
+use crate::db::stats::{self, Window24h};
 use crate::db::tests_repo::{self, SpeedtestRow};
 
 fn decode_base64(input: &str) -> Option<Vec<u8>> {
@@ -69,7 +71,7 @@ fn format_labels(row: &SpeedtestRow) -> String {
     format!("provider=\"{provider}\",server_id=\"{server_id}\",server_name=\"{server_name}\"")
 }
 
-pub fn format_metrics(latest: Option<&SpeedtestRow>) -> String {
+pub fn format_metrics(latest: Option<&SpeedtestRow>, window: &Window24h) -> String {
     type Family = (&'static str, &'static str, fn(&SpeedtestRow) -> String);
     let families: [Family; 7] = [
         (
@@ -114,6 +116,39 @@ pub fn format_metrics(latest: Option<&SpeedtestRow>) -> String {
             let labels = format_labels(row);
             out.push_str(&format!("{name}{{{labels}}} {}\n", value(row)));
         }
+    }
+
+    let avgs = [
+        (
+            "netrack_download_avg_24h_mbps",
+            "Average download speed of successful tests in the last 24 hours, in megabits per second",
+            window.avg_download,
+        ),
+        (
+            "netrack_upload_avg_24h_mbps",
+            "Average upload speed of successful tests in the last 24 hours, in megabits per second",
+            window.avg_upload,
+        ),
+        (
+            "netrack_ping_avg_24h_ms",
+            "Average ping of successful tests in the last 24 hours, in milliseconds",
+            window.avg_ping,
+        ),
+    ];
+    for (name, help, avg) in avgs {
+        out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} gauge\n"));
+        if let Some(v) = avg {
+            out.push_str(&format!("{name} {v}\n"));
+        }
+    }
+
+    let name = "netrack_tests_24h_total";
+    out.push_str(&format!(
+        "# HELP {name} Number of speed tests in the last 24 hours by result\n# TYPE {name} gauge\n"
+    ));
+    if window.ok + window.failed > 0 {
+        out.push_str(&format!("{name}{{result=\"ok\"}} {}\n", window.ok));
+        out.push_str(&format!("{name}{{result=\"failed\"}} {}\n", window.failed));
     }
     out
 }
@@ -170,7 +205,13 @@ pub async fn metrics_handler(State(state): State<AppState>, req: Request) -> Res
         Err(e) => return ApiError::from(e).into_response(),
     };
 
-    let body = format_metrics(latest.as_ref());
+    let since_ms = (Utc::now() - Duration::hours(24)).timestamp_millis();
+    let window = match stats::window(&state.db, since_ms).await {
+        Ok(w) => w,
+        Err(e) => return ApiError::from(e).into_response(),
+    };
+
+    let body = format_metrics(latest.as_ref(), &window);
     Response::builder()
         .status(StatusCode::OK)
         .header(

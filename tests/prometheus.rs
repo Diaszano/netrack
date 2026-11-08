@@ -542,3 +542,66 @@ async fn prometheus_auth_mode_protected() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("netrack_ping_latency_ms"));
 }
+
+#[tokio::test]
+async fn prometheus_metrics_24h_aggregates() {
+    let app = TestApp::new().await;
+    let now = Utc::now();
+    for (dl, err, h) in [
+        (100.0, false, 2),
+        (200.0, false, 3),
+        (0.0, true, 1),
+        (900.0, false, 30),
+    ] {
+        let metrics = if err {
+            Err("boom".into())
+        } else {
+            Ok(Metrics {
+                ping: 10.0,
+                jitter: 1.0,
+                download: dl,
+                upload: 50.0,
+            })
+        };
+        insert(
+            &app.db,
+            NewSpeedtest {
+                kind: TestKind::Auto,
+                provider: "dummy".into(),
+                server_id: None,
+                server_name: None,
+                server_host: None,
+                result_id: None,
+                metrics,
+                duration: 1.0,
+            },
+            now - chrono::Duration::hours(h),
+        )
+        .await
+        .unwrap();
+    }
+    let (_, _, body) = app.get("/api/prometheus/metrics", None, None).await;
+    assert!(body.contains("netrack_download_avg_24h_mbps 150\n"));
+    assert!(body.contains("netrack_tests_24h_total{result=\"ok\"} 2\n"));
+    assert!(body.contains("netrack_tests_24h_total{result=\"failed\"} 1\n"));
+}
+
+#[tokio::test]
+async fn prometheus_metrics_24h_empty_has_no_samples() {
+    let app = TestApp::new().await;
+    let (_, _, body) = app.get("/api/prometheus/metrics", None, None).await;
+    for n in [
+        "netrack_download_avg_24h_mbps",
+        "netrack_upload_avg_24h_mbps",
+        "netrack_ping_avg_24h_ms",
+        "netrack_tests_24h_total",
+    ] {
+        assert!(body.contains(&format!("# TYPE {n} gauge")));
+        assert!(
+            !body
+                .lines()
+                .any(|l| l.starts_with(n) && !l.starts_with('#')),
+            "{n}"
+        );
+    }
+}

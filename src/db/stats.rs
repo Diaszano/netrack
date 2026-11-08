@@ -105,6 +105,39 @@ pub async fn statistics(db: &Db, from: NaiveDate, to: NaiveDate) -> anyhow::Resu
     db.call(move |conn| query(conn, from_ms, to_ms)).await
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct Window24h {
+    pub ok: u64,
+    pub failed: u64,
+    pub avg_download: Option<f64>,
+    pub avg_upload: Option<f64>,
+    pub avg_ping: Option<f64>,
+}
+
+/// Counts and averages (OK tests only) for tests created at or after `since_ms`.
+pub async fn window(db: &Db, since_ms: i64) -> anyhow::Result<Window24h> {
+    db.call(move |conn| {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FILTER (WHERE error IS NULL), COUNT(error), \
+             AVG(download) FILTER (WHERE error IS NULL), \
+             AVG(upload) FILTER (WHERE error IS NULL), \
+             AVG(ping) FILTER (WHERE error IS NULL) \
+             FROM speedtests WHERE created_at >= ?1",
+            [since_ms],
+            |r| {
+                Ok(Window24h {
+                    ok: r.get::<_, i64>(0)? as u64,
+                    failed: r.get::<_, i64>(1)? as u64,
+                    avg_download: r.get(2)?,
+                    avg_upload: r.get(3)?,
+                    avg_ping: r.get(4)?,
+                })
+            },
+        )?)
+    })
+    .await
+}
+
 fn query(conn: &Connection, from_ms: i64, to_ms: i64) -> anyhow::Result<Statistics> {
     let (total, failed) = conn.query_row(
         "SELECT COUNT(*), COUNT(error) FROM speedtests WHERE created_at >= ?1 AND created_at < ?2",
