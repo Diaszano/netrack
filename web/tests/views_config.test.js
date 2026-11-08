@@ -129,6 +129,13 @@ test("settings_view_renders_cron_retention_expected_and_locales", () => {
   assert.ok(html.includes("English"), "Must render English name");
 });
 
+test("settings_view_leaves_backup_keep_empty_when_unknown", () => {
+  const state = createMockState();
+  delete state.config.backupKeep;
+  const html = renderSettings(state, { t: tPt, locales });
+  assert.ok(/name="backupKeep"[^>]*value=""/.test(html), "backupKeep must render empty when missing");
+});
+
 test("config_patch_maps_camel_to_snake_and_surfaces_400", async () => {
   const calls = [];
   const mockFetch = async (url, opts) => {

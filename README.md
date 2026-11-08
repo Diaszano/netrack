@@ -17,8 +17,10 @@ Monitor de velocidade de internet auto-hospedado, escrito em Rust. Executa teste
 - **Notificações e Integrações (8 canais × 7 eventos)**:
   - Canais: **Discord**, **Telegram**, **Pushover**, **Gotify**, **ntfy**, **Webhook genérico**, **InfluxDB v2** e **Healthchecks**.
   - Eventos: `speedtest.started`, `speedtest.finished`, `speedtest.failed`, `speedtest.degraded`, `minute.passed`, `config.updated`, `expected.updated`.
+  - Segredos das integrações voltam mascarados como `***` nas respostas da API; enviar `***` em uma atualização mantém o valor armazenado.
 - **Observabilidade e Dados**:
   - Endpoint **Prometheus** (`/api/prometheus/metrics`) com suporte a Basic Auth.
+  - Métricas das últimas 24h: `netrack_download_avg_24h_mbps`, `netrack_upload_avg_24h_mbps`, `netrack_ping_avg_24h_ms` e `netrack_tests_24h{result="ok"|"failed"}`.
   - Exportação/importação em **JSON** e **CSV**, além de importação compatível com **MySpeed**.
   - Imagem **Open Graph** dinâmica (`/api/opengraph/image`) com o último resultado.
 - **Multi-instância (Nós Remotos)**:
