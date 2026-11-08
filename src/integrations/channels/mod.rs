@@ -17,7 +17,7 @@ pub async fn dispatch(
     config: &Value,
     event: &IntegrationEvent,
 ) -> anyhow::Result<()> {
-    match channel_type {
+    let sent = match channel_type {
         "discord" => discord::send(client, config, event).await,
         "telegram" => telegram::send(client, config, event).await,
         "pushover" => pushover::send(client, config, event).await,
@@ -27,5 +27,10 @@ pub async fn dispatch(
         "influxdb" => influxdb::send(client, config, event).await,
         "healthchecks" => healthchecks::send(client, config, event).await,
         other => anyhow::bail!("unsupported channel_type: '{other}'"),
-    }
+    };
+    // reqwest errors print the request URL, which carries secrets (telegram token, webhook urls).
+    sent.map_err(|e| match e.downcast::<reqwest::Error>() {
+        Ok(re) => re.without_url().into(),
+        Err(e) => e,
+    })
 }

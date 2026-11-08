@@ -743,3 +743,30 @@ async fn integration_secrets_are_masked_and_preserved() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["error"].as_str().unwrap().contains("bot_token"));
 }
+
+#[tokio::test]
+async fn test_endpoint_error_does_not_leak_secret_url() {
+    let app = TestApp::new(false).await;
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let (_, created) = app
+        .request(
+            Method::POST,
+            "/api/integrations",
+            Some(json!({
+                "name": "TG", "channel_type": "telegram",
+                "config": {"bot_token": "SECRET-TOKEN", "chat_id": "1",
+                           "api_url": format!("http://127.0.0.1:{port}")},
+                "events": [], "enabled": true
+            })),
+        )
+        .await;
+    let id = created["id"].as_i64().unwrap();
+    let (status, body) = app
+        .request(Method::POST, &format!("/api/integrations/{id}/test"), None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(!body.to_string().contains("SECRET-TOKEN"), "{body}");
+}
