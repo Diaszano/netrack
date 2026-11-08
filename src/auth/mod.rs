@@ -54,6 +54,47 @@ pub async fn verify_password_async(password: String, hash: String) -> bool {
     ok
 }
 
+pub enum PasswordCheck {
+    Ok,
+    Bad,
+    Locked(std::time::Duration),
+}
+
+/// Client IP for lockout. `X-Forwarded-For` is client-controlled, so it only counts behind a
+/// trusted proxy, and then only the last value (the one the proxy appended).
+pub fn client_ip(
+    s: &AppState,
+    headers: &axum::http::HeaderMap,
+    conn: Option<std::net::SocketAddr>,
+) -> std::net::IpAddr {
+    let forwarded = s
+        .trust_proxy
+        .then(|| headers.get("x-forwarded-for")?.to_str().ok())
+        .flatten()
+        .and_then(|v| v.rsplit(',').next()?.trim().parse().ok());
+    forwarded
+        .or(conn.map(|c| c.ip()))
+        .unwrap_or(std::net::IpAddr::from([0, 0, 0, 0]))
+}
+
+/// Every Argon2 password check goes through here so one per-IP limit covers all entry points.
+pub async fn check_password(
+    s: &AppState,
+    ip: std::net::IpAddr,
+    password: String,
+    hash: String,
+) -> PasswordCheck {
+    if let Err(wait) = s.login_lockout.try_begin(ip, std::time::Instant::now()) {
+        return PasswordCheck::Locked(wait);
+    }
+    if verify_password_async(password, hash).await {
+        s.login_lockout.succeed(ip);
+        PasswordCheck::Ok
+    } else {
+        PasswordCheck::Bad
+    }
+}
+
 pub fn verify_password(password: &str, hash: &str) -> bool {
     if hash.is_empty() {
         return false;
@@ -193,7 +234,18 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
     if !authenticated && let Some(t) = &bearer_token {
         authenticated = validate_session(&state.db, t).await.unwrap_or(false);
         if !authenticated && cfg.password_mode != PasswordMode::None {
-            authenticated = verify_password_async(t.clone(), cfg.password_hash.clone()).await;
+            let ip = client_ip(
+                &state,
+                req.headers(),
+                req.extensions()
+                    .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                    .map(|c| c.0),
+            );
+            match check_password(&state, ip, t.clone(), cfg.password_hash.clone()).await {
+                PasswordCheck::Ok => authenticated = true,
+                PasswordCheck::Bad => {}
+                PasswordCheck::Locked(w) => return ApiError::too_many_attempts(w).into_response(),
+            }
         }
     }
     let token = cookie_token.or(bearer_token);

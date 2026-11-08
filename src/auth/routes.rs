@@ -1,5 +1,4 @@
-use std::net::{IpAddr, SocketAddr};
-use std::time::Instant;
+use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, Extension, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -9,8 +8,8 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AuthContext, SESSION_COOKIE_NAME, SESSION_DURATION_SECS, create_session, delete_all_sessions,
-    delete_session, hash_password, verify_password_async,
+    AuthContext, PasswordCheck, SESSION_COOKIE_NAME, SESSION_DURATION_SECS, check_password,
+    client_ip, create_session, delete_all_sessions, delete_session, hash_password,
 };
 use crate::api::{ApiError, ApiJson, ApiResult, AppState};
 use crate::db::config::{self, PasswordMode};
@@ -53,45 +52,22 @@ pub struct LoginResponse {
     pub expires_at: i64,
 }
 
-/// `X-Forwarded-For` is client-controlled, so it only counts behind a trusted proxy.
-fn client_ip(
-    s: &AppState,
-    headers: &HeaderMap,
-    conn: Option<Extension<ConnectInfo<SocketAddr>>>,
-) -> IpAddr {
-    let forwarded = s
-        .trust_proxy
-        .then(|| headers.get("x-forwarded-for")?.to_str().ok())
-        .flatten()
-        .and_then(|v| v.split(',').next()?.trim().parse().ok());
-    forwarded
-        .or(conn.map(|c| c.0.0.ip()))
-        .unwrap_or(IpAddr::from([0, 0, 0, 0]))
-}
-
 async fn login(
     State(s): State<AppState>,
     headers: HeaderMap,
     conn: Option<Extension<ConnectInfo<SocketAddr>>>,
     ApiJson(body): ApiJson<LoginRequest>,
 ) -> ApiResult<impl IntoResponse> {
-    let ip = client_ip(&s, &headers, conn);
-    if let Err(wait) = s.login_lockout.check(ip, Instant::now()) {
-        let secs = wait.as_secs().max(1);
-        return Ok((
-            StatusCode::TOO_MANY_REQUESTS,
-            [(header::RETRY_AFTER, secs.to_string())],
-            Json(serde_json::json!({ "error": "too many attempts" })),
-        )
-            .into_response());
-    }
     let cfg = config::load(&s.db).await?;
     if cfg.password_mode != PasswordMode::None {
-        if !verify_password_async(body.password.clone(), cfg.password_hash.clone()).await {
-            s.login_lockout.fail(ip, Instant::now());
-            return Err(ApiError::new(StatusCode::UNAUTHORIZED, "invalid password"));
+        let ip = client_ip(&s, &headers, conn.map(|c| c.0.0));
+        match check_password(&s, ip, body.password, cfg.password_hash).await {
+            PasswordCheck::Ok => {}
+            PasswordCheck::Bad => {
+                return Err(ApiError::new(StatusCode::UNAUTHORIZED, "invalid password"));
+            }
+            PasswordCheck::Locked(w) => return Err(ApiError::too_many_attempts(w)),
         }
-        s.login_lockout.succeed(ip);
     }
 
     let (token, expires_at) = create_session(&s.db).await?;
@@ -105,7 +81,7 @@ async fn login(
         cookie_val.parse().map_err(|e| anyhow::anyhow!("{e}"))?,
     );
 
-    Ok((headers, Json(LoginResponse { token, expires_at })).into_response())
+    Ok((headers, Json(LoginResponse { token, expires_at })))
 }
 
 async fn logout(
@@ -139,6 +115,8 @@ pub struct PasswordRequest {
 
 async fn set_password(
     State(s): State<AppState>,
+    headers: HeaderMap,
+    conn: Option<Extension<ConnectInfo<SocketAddr>>>,
     Extension(auth): Extension<AuthContext>,
     ApiJson(body): ApiJson<PasswordRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
@@ -147,7 +125,14 @@ async fn set_password(
     if cfg.password_mode != PasswordMode::None {
         let is_authed = auth.authenticated
             || match body.current_password.clone() {
-                Some(p) => verify_password_async(p, cfg.password_hash.clone()).await,
+                Some(p) => {
+                    let ip = client_ip(&s, &headers, conn.map(|c| c.0.0));
+                    match check_password(&s, ip, p, cfg.password_hash.clone()).await {
+                        PasswordCheck::Ok => true,
+                        PasswordCheck::Bad => false,
+                        PasswordCheck::Locked(w) => return Err(ApiError::too_many_attempts(w)),
+                    }
+                }
                 None => false,
             };
 

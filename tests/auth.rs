@@ -756,14 +756,53 @@ async fn forwarded_for_separates_clients_with_trust_proxy() {
     let app = TestApp::with_trust_proxy(true).await;
     set_protected(&app).await;
     for _ in 0..5 {
-        login_from(&app, "wrong", Some("10.0.0.1")).await;
+        login_from(&app, "wrong", Some("9.9.9.9, 10.0.0.1")).await;
     }
+    // The client-supplied first value is ignored; the proxy-appended last one counts.
     assert_eq!(
-        login_from(&app, "mypassword123", Some("10.0.0.1")).await.0,
+        login_from(&app, "mypassword123", Some("1.1.1.1, 10.0.0.1"))
+            .await
+            .0,
         StatusCode::TOO_MANY_REQUESTS
     );
     assert_eq!(
-        login_from(&app, "mypassword123", Some("10.0.0.2")).await.0,
+        login_from(&app, "mypassword123", Some("9.9.9.9, 10.0.0.2"))
+            .await
+            .0,
         StatusCode::OK
     );
+}
+
+#[tokio::test]
+async fn lockout_is_shared_with_bearer_password_checks() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    for _ in 0..5 {
+        let (status, _, _) = app
+            .request(
+                Method::GET,
+                "/api/speedtests",
+                None,
+                None,
+                Some("Bearer wrong"),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(
+        login_from(&app, "mypassword123", None).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+#[tokio::test]
+async fn concurrent_wrong_logins_cannot_exceed_the_limit() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    let results = futures::future::join_all((0..10).map(|_| login_from(&app, "wrong", None))).await;
+    let locked = results
+        .iter()
+        .filter(|r| r.0 == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!(locked, 5);
 }

@@ -13,7 +13,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::extract::{FromRequest, FromRequestParts};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde_json::json;
@@ -184,11 +184,21 @@ pub fn router(state: AppState) -> Router {
 }
 
 /// An error rendered as `{ "error": "<message>" }`.
-pub(crate) struct ApiError(StatusCode, String);
+pub(crate) struct ApiError(StatusCode, String, Option<u64>);
 
 impl ApiError {
     pub(crate) fn new(status: StatusCode, message: impl Into<String>) -> ApiError {
-        ApiError(status, message.into())
+        ApiError(status, message.into(), None)
+    }
+
+    /// 429 with `Retry-After` (seconds, rounded up).
+    pub(crate) fn too_many_attempts(wait: std::time::Duration) -> ApiError {
+        let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
+        ApiError(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many attempts".into(),
+            Some(secs),
+        )
     }
 
     pub(crate) fn bad_request(message: impl Into<String>) -> ApiError {
@@ -205,7 +215,11 @@ impl From<anyhow::Error> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.0, Json(json!({ "error": self.1 }))).into_response()
+        let mut res = (self.0, Json(json!({ "error": self.1 }))).into_response();
+        if let Some(secs) = self.2 {
+            res.headers_mut().insert(header::RETRY_AFTER, secs.into());
+        }
+        res
     }
 }
 

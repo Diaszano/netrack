@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
 use crate::api::{ApiError, AppState};
-use crate::auth::{AuthContext, verify_password_async};
+use crate::auth::{AuthContext, PasswordCheck, check_password, client_ip};
 use crate::db::config::{self, PasswordMode};
 use crate::db::tests_repo::{self, SpeedtestRow};
 
@@ -135,7 +135,20 @@ pub async fn metrics_handler(State(state): State<AppState>, req: Request) -> Res
                 .and_then(|h| h.to_str().ok())
                 .and_then(extract_basic_auth);
             match creds {
-                Some((_user, pass)) => verify_password_async(pass, cfg.password_hash.clone()).await,
+                Some((_user, pass)) => {
+                    let conn = req
+                        .extensions()
+                        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                        .map(|c| c.0);
+                    let ip = client_ip(&state, req.headers(), conn);
+                    match check_password(&state, ip, pass, cfg.password_hash.clone()).await {
+                        PasswordCheck::Ok => true,
+                        PasswordCheck::Bad => false,
+                        PasswordCheck::Locked(w) => {
+                            return ApiError::too_many_attempts(w).into_response();
+                        }
+                    }
+                }
                 None => false,
             }
         } else {
