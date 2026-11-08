@@ -8,7 +8,10 @@ use axum::routing::{delete, get, post, put};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{Integration, IntegrationEvent, SUPPORTED_CHANNELS, SUPPORTED_EVENTS, channels};
+use super::{
+    Integration, IntegrationEvent, MASK, SECRET_KEYS, SUPPORTED_CHANNELS, SUPPORTED_EVENTS,
+    channels, masked, unmask,
+};
 use crate::api::{ApiError, ApiJson, ApiPath, ApiResult, AppState};
 
 pub fn routes() -> Router<AppState> {
@@ -22,7 +25,12 @@ pub fn routes() -> Router<AppState> {
 
 async fn list_integrations(State(s): State<AppState>) -> ApiResult<Json<Vec<Integration>>> {
     let items = super::list(&s.db).await?;
-    Ok(Json(items))
+    Ok(Json(items.into_iter().map(mask_integration).collect()))
+}
+
+fn mask_integration(mut item: Integration) -> Integration {
+    item.config = masked(&item.config);
+    item
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +83,15 @@ async fn create_integration(
     ApiJson(body): ApiJson<IntegrationPayload>,
 ) -> ApiResult<(StatusCode, Json<Integration>)> {
     validate_payload(&body)?;
+    // On create there is no stored value to restore, so "***" would be saved as the secret.
+    if let Some(k) = SECRET_KEYS
+        .iter()
+        .find(|k| body.config.get(**k).and_then(Value::as_str) == Some(MASK))
+    {
+        return Err(ApiError::bad_request(format!(
+            "'{k}' cannot be the mask value '{MASK}'"
+        )));
+    }
 
     let created = super::insert(
         &s.db,
@@ -86,7 +103,7 @@ async fn create_integration(
     )
     .await?;
 
-    Ok((StatusCode::CREATED, Json(created)))
+    Ok((StatusCode::CREATED, Json(mask_integration(created))))
 }
 
 async fn update_integration(
@@ -96,19 +113,26 @@ async fn update_integration(
 ) -> ApiResult<Json<Integration>> {
     validate_payload(&body)?;
 
+    let Some(stored) = super::get(&s.db, id).await? else {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "integration not found",
+        ));
+    };
+
     let updated = super::update(
         &s.db,
         id,
         body.name.trim().to_string(),
         body.channel_type,
-        body.config,
+        unmask(body.config, &stored.config),
         body.events,
         body.enabled,
     )
     .await?;
 
     match updated {
-        Some(item) => Ok(Json(item)),
+        Some(item) => Ok(Json(mask_integration(item))),
         None => Err(ApiError::new(
             StatusCode::NOT_FOUND,
             "integration not found",

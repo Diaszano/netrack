@@ -98,6 +98,8 @@ const EVENT_LABEL_MAP = {
   "minute.passed": { key: "integrations.eventHeartbeat", fallback: "Heartbeat por minuto (minute.passed)" },
 };
 
+const SECRET_MASK = "***";
+
 /**
  * Extracts integration payload from FormData for POST/PUT /api/integrations.
  */
@@ -113,6 +115,9 @@ export function extractIntegrationPayload(formData) {
     if (raw != null && String(raw).trim() !== "") {
       const strVal = String(raw).trim();
       config[field.key] = field.type === "number" && !isNaN(Number(strVal)) ? Number(strVal) : strVal;
+    } else if (formData.get(`masked.${field.key}`)) {
+      // Untouched masked secret: send the mask back so the server keeps the stored value.
+      config[field.key] = SECRET_MASK;
     }
   }
 
@@ -139,10 +144,15 @@ export function renderChannelConfigFields(channelType, currentConfig = {}, { t =
     .map((field) => {
       const label = t(field.labelKey) !== field.labelKey ? t(field.labelKey) : field.defaultLabel;
       const val = currentConfig && currentConfig[field.key] != null ? String(currentConfig[field.key]) : "";
-      const reqAttr = field.required ? " required" : "";
+      const isMasked = val === SECRET_MASK;
+      const reqAttr = field.required && !isMasked ? " required" : "";
+      const type = isMasked ? "password" : field.type;
+      const placeholder = isMasked ? "••••" : field.placeholder || "";
+      const maskedInput = isMasked ? `<input type="hidden" name="masked.${escapeHtml(field.key)}" value="1">` : "";
       return `<div class="form-group">
       <label class="form-label" for="int-cfg-${escapeHtml(field.key)}">${escapeHtml(label)}</label>
-      <input id="int-cfg-${escapeHtml(field.key)}" type="${escapeHtml(field.type)}" name="config.${escapeHtml(field.key)}" value="${escapeHtml(val)}" placeholder="${escapeHtml(field.placeholder || "")}" class="form-control"${reqAttr}>
+      <input id="int-cfg-${escapeHtml(field.key)}" type="${escapeHtml(type)}" name="config.${escapeHtml(field.key)}" value="${isMasked ? "" : escapeHtml(val)}" placeholder="${escapeHtml(placeholder)}" class="form-control"${reqAttr}>
+      ${maskedInput}
     </div>`;
     })
     .join("\n");

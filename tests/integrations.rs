@@ -674,3 +674,72 @@ async fn test_ping_endpoint_reports_delivery_failure() {
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(body["error"].as_str().unwrap().contains("delivery failed"));
 }
+
+#[tokio::test]
+async fn integration_secrets_are_masked_and_preserved() {
+    let mock = MockServer::start().await;
+    let app = TestApp::new(false).await;
+    let api = format!("{}/tg", mock.base_url());
+
+    let (status, created) = app
+        .request(
+            Method::POST,
+            "/api/integrations",
+            Some(json!({
+                "name": "TG", "channel_type": "telegram",
+                "config": {"bot_token": "abc", "chat_id": "1", "api_url": api},
+                "events": ["speedtest.finished"], "enabled": true
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["config"]["bot_token"], "***");
+    let id = created["id"].as_i64().unwrap();
+
+    let (_, list) = app.request(Method::GET, "/api/integrations", None).await;
+    assert_eq!(list[0]["config"]["bot_token"], "***");
+    assert_eq!(list[0]["config"]["chat_id"], "1");
+
+    let (status, updated) = app
+        .request(
+            Method::PUT,
+            &format!("/api/integrations/{id}"),
+            Some(json!({
+                "name": "TG", "channel_type": "telegram",
+                "config": {"bot_token": "***", "chat_id": "2", "api_url": api},
+                "events": ["speedtest.finished"], "enabled": true
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["config"]["bot_token"], "***");
+
+    let stored = netrack::integrations::get(&app.db, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.config["bot_token"], "abc");
+    assert_eq!(stored.config["chat_id"], "2");
+
+    let (status, body) = app
+        .request(Method::POST, &format!("/api/integrations/{id}/test"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], true);
+    assert!(mock.recorded().iter().any(|r| r.uri.contains("botabc")));
+
+    // "***" on create has nothing to unmask and must never be stored.
+    let (status, body) = app
+        .request(
+            Method::POST,
+            "/api/integrations",
+            Some(json!({
+                "name": "Bad", "channel_type": "telegram",
+                "config": {"bot_token": "***", "chat_id": "1"},
+                "events": [], "enabled": true
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap().contains("bot_token"));
+}

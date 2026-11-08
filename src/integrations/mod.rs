@@ -506,3 +506,74 @@ impl IntegrationDispatcher {
         })
     }
 }
+
+pub const SECRET_KEYS: &[&str] = &[
+    "bot_token",
+    "token",
+    "app_token",
+    "user_key",
+    "api_token",
+    "auth_token",
+    "secret",
+    "webhook_url",
+    "ping_url",
+    "headers",
+    "password",
+];
+pub const MASK: &str = "***";
+
+/// Replaces every non-empty secret value with `MASK` for API responses.
+pub fn masked(config: &Value) -> Value {
+    let mut out = config.clone();
+    if let Some(obj) = out.as_object_mut() {
+        for k in SECRET_KEYS {
+            if let Some(v) = obj.get_mut(*k)
+                && !v.is_null()
+                && v.as_str() != Some("")
+            {
+                *v = Value::String(MASK.into());
+            }
+        }
+    }
+    out
+}
+
+/// Restores stored values for secret keys the client sent back as `MASK`.
+pub fn unmask(mut new: Value, old: &Value) -> Value {
+    if let Some(obj) = new.as_object_mut() {
+        for k in SECRET_KEYS {
+            if obj.get(*k).and_then(Value::as_str) == Some(MASK) {
+                match old.get(*k) {
+                    Some(v) => obj.insert((*k).into(), v.clone()),
+                    None => obj.remove(*k),
+                };
+            }
+        }
+    }
+    new
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn masked_hides_non_empty_secrets_only() {
+        assert_eq!(
+            masked(&json!({"bot_token":"abc","chat_id":"1"})),
+            json!({"bot_token":"***","chat_id":"1"})
+        );
+        assert_eq!(masked(&json!({"token":""})), json!({"token":""}));
+    }
+
+    #[test]
+    fn unmask_restores_stored_secret() {
+        assert_eq!(
+            unmask(
+                json!({"bot_token":"***","chat_id":"2"}),
+                &json!({"bot_token":"abc","chat_id":"1"})
+            ),
+            json!({"bot_token":"abc","chat_id":"2"})
+        );
+    }
+}
