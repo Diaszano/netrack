@@ -36,6 +36,9 @@ async fn creates_dated_backup() {
 async fn keeps_only_n() {
     let tmp = tempfile::tempdir().unwrap();
     let db = open(tmp.path()).await;
+    let manual = tmp.path().join("backups/netrack-manual.db");
+    std::fs::create_dir_all(manual.parent().unwrap()).unwrap();
+    std::fs::write(&manual, b"x").unwrap();
     for d in 1..=9 {
         backup::run(&db, tmp.path(), day(d), 7).await.unwrap();
     }
@@ -44,7 +47,8 @@ async fn keeps_only_n() {
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
     names.sort();
-    assert_eq!(names.len(), 7);
+    assert_eq!(names.len(), 8);
+    assert!(manual.exists());
     assert_eq!(names[0], "netrack-2026-11-03.db");
 }
 

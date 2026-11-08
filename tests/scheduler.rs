@@ -178,13 +178,9 @@ async fn paused_scheduler_does_not_run() {
     config::set(&db, "paused", "true").await.unwrap();
     let tc = TestClock::new("2026-03-10T10:00:10Z");
     let (tx, rx) = watch::channel(());
-    let sched = Scheduler::spawn_with_clock(
-        db.clone(),
-        runner,
-        rx,
-        tempfile::tempdir().unwrap().keep(),
-        tc.clock(),
-    );
+    let bk = tempfile::tempdir().unwrap();
+    let sched =
+        Scheduler::spawn_with_clock(db.clone(), runner, rx, bk.path().to_path_buf(), tc.clock());
 
     advance(180).await;
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -205,13 +201,9 @@ async fn failing_runs_do_not_stop_later_fires() {
     config::set(&db, "schedule_offset", "false").await.unwrap();
     let tc = TestClock::new("2026-03-10T10:00:10Z");
     let (_tx, rx) = watch::channel(());
-    let _sched = Scheduler::spawn_with_clock(
-        db.clone(),
-        runner,
-        rx,
-        tempfile::tempdir().unwrap().keep(),
-        tc.clock(),
-    );
+    let bk = tempfile::tempdir().unwrap();
+    let _sched =
+        Scheduler::spawn_with_clock(db.clone(), runner, rx, bk.path().to_path_buf(), tc.clock());
 
     advance(190).await;
     // Three fires, each attempt retried once by the runner.
@@ -226,13 +218,9 @@ async fn busy_runner_does_not_stop_later_fires() {
     config::set(&db, "schedule_offset", "false").await.unwrap();
     let tc = TestClock::new("2026-03-10T10:00:10Z");
     let (_tx, rx) = watch::channel(());
-    let _sched = Scheduler::spawn_with_clock(
-        db.clone(),
-        runner,
-        rx,
-        tempfile::tempdir().unwrap().keep(),
-        tc.clock(),
-    );
+    let bk = tempfile::tempdir().unwrap();
+    let _sched =
+        Scheduler::spawn_with_clock(db.clone(), runner, rx, bk.path().to_path_buf(), tc.clock());
 
     // Fires at :00 (runs until +150s), +60 and +120 are Busy, +180... runs again.
     advance(250).await;
@@ -247,13 +235,9 @@ async fn invalid_cron_recovers_after_reload() {
     raw_set(&db, "cron", "not a cron").await;
     let tc = TestClock::new("2026-03-10T10:00:10Z");
     let (tx, rx) = watch::channel(());
-    let sched = Scheduler::spawn_with_clock(
-        db.clone(),
-        runner,
-        rx,
-        tempfile::tempdir().unwrap().keep(),
-        tc.clock(),
-    );
+    let bk = tempfile::tempdir().unwrap();
+    let sched =
+        Scheduler::spawn_with_clock(db.clone(), runner, rx, bk.path().to_path_buf(), tc.clock());
 
     advance(120).await;
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -272,13 +256,9 @@ async fn backward_clock_jump_does_not_stall() {
     config::set(&db, "schedule_offset", "false").await.unwrap();
     let tc = TestClock::new("2026-03-10T10:30:00Z");
     let (_tx, rx) = watch::channel(());
-    let sched = Scheduler::spawn_with_clock(
-        db.clone(),
-        runner,
-        rx,
-        tempfile::tempdir().unwrap().keep(),
-        tc.clock(),
-    );
+    let bk = tempfile::tempdir().unwrap();
+    let sched =
+        Scheduler::spawn_with_clock(db.clone(), runner, rx, bk.path().to_path_buf(), tc.clock());
     advance(5).await;
     assert_eq!(sched.next_run(), Some(utc("2026-03-10T11:00:00Z")));
 
@@ -301,13 +281,9 @@ async fn transient_load_error_recovers_via_retry() {
     raw_set(&db, "paused", "garbage").await; // makes config::load fail
     let tc = TestClock::new("2026-03-10T10:00:10Z");
     let (_tx, rx) = watch::channel(());
-    let sched = Scheduler::spawn_with_clock(
-        db.clone(),
-        runner,
-        rx,
-        tempfile::tempdir().unwrap().keep(),
-        tc.clock(),
-    );
+    let bk = tempfile::tempdir().unwrap();
+    let sched =
+        Scheduler::spawn_with_clock(db.clone(), runner, rx, bk.path().to_path_buf(), tc.clock());
 
     advance(30).await;
     assert!(sched.next_run().is_none());
@@ -346,13 +322,9 @@ async fn waits_for_clock_to_pass_newest_row() {
     // Booted without RTC: the clock is an hour behind the newest row.
     let tc = TestClock::new("2026-03-10T10:00:10Z");
     let (_tx, rx) = watch::channel(());
-    let sched = Scheduler::spawn_with_clock(
-        db.clone(),
-        runner,
-        rx,
-        tempfile::tempdir().unwrap().keep(),
-        tc.clock(),
-    );
+    let bk = tempfile::tempdir().unwrap();
+    let sched =
+        Scheduler::spawn_with_clock(db.clone(), runner, rx, bk.path().to_path_buf(), tc.clock());
 
     advance(600).await;
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -406,7 +378,8 @@ async fn retention_runs_at_startup() {
     .await
     .unwrap();
     let (_tx, rx) = watch::channel(());
-    let _sched = Scheduler::spawn(db.clone(), runner, rx, tempfile::tempdir().unwrap().keep());
+    let bk = tempfile::tempdir().unwrap();
+    let _sched = Scheduler::spawn(db.clone(), runner, rx, bk.path().to_path_buf());
 
     let mut gone = false;
     for _ in 0..100 {

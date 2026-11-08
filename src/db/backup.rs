@@ -37,18 +37,31 @@ pub async fn run(
         .context("VACUUM INTO failed")?;
         tokio::fs::rename(&tmp, &target).await?;
     }
+    // The backup exists now; a prune failure must not report it as failed.
+    if let Err(e) = prune(&dir, keep as usize).await {
+        tracing::warn!(error = %e, "cannot prune old backups");
+    }
+    Ok(Some(target))
+}
+
+/// Deletes all but the newest `keep` files named exactly `netrack-<date>.db`.
+async fn prune(dir: &Path, keep: usize) -> anyhow::Result<()> {
     let mut names = Vec::new();
-    let mut rd = tokio::fs::read_dir(&dir).await?;
+    let mut rd = tokio::fs::read_dir(dir).await?;
     while let Some(e) = rd.next_entry().await? {
         let name = e.file_name().to_string_lossy().into_owned();
-        if name.starts_with(PREFIX) && name.ends_with(SUFFIX) {
+        let is_backup = name
+            .strip_prefix(PREFIX)
+            .and_then(|n| n.strip_suffix(SUFFIX))
+            .is_some_and(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").is_ok());
+        if is_backup {
             names.push(name);
         }
     }
     names.sort();
-    let excess = names.len().saturating_sub(keep as usize);
+    let excess = names.len().saturating_sub(keep);
     for name in &names[..excess] {
         tokio::fs::remove_file(dir.join(name)).await?;
     }
-    Ok(Some(target))
+    Ok(())
 }

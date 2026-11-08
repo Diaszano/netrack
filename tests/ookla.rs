@@ -37,7 +37,7 @@ async fn setup_app() -> TestContext {
         db.clone(),
         runner.clone(),
         rx,
-        tempfile::tempdir().unwrap().keep(),
+        data_dir.path().to_path_buf(),
     );
     let state = AppState::new(db.clone(), runner.clone(), tx, Arc::new(scheduler))
         .with_data_dir(data_dir.path());
@@ -156,7 +156,7 @@ async fn ookla_install_downloads_and_unpacks_tgz() {
         db.clone(),
         runner.clone(),
         rx,
-        tempfile::tempdir().unwrap().keep(),
+        data_dir.path().to_path_buf(),
     );
     let state = AppState::new(db.clone(), runner.clone(), tx, Arc::new(scheduler))
         .with_data_dir(data_dir.path())

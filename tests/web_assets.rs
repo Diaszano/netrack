@@ -37,19 +37,15 @@ impl SpeedProvider for FakeProvider {
     }
 }
 
-async fn setup_app() -> Router {
+async fn setup_app() -> (Router, tempfile::TempDir) {
     let db = Db::open_in_memory(chrono_tz::Tz::UTC).await.unwrap();
     let factory: ProviderFactory = Arc::new(|_| Box::new(FakeProvider));
     let runner = Runner::new(db.clone(), factory);
     let (tx, rx) = watch::channel(());
-    let scheduler = Scheduler::spawn(
-        db.clone(),
-        runner.clone(),
-        rx,
-        tempfile::tempdir().unwrap().keep(),
-    );
+    let bk = tempfile::tempdir().unwrap();
+    let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx, bk.path().to_path_buf());
     let state = AppState::new(db.clone(), runner.clone(), tx, Arc::new(scheduler));
-    router(state)
+    (router(state), bk)
 }
 
 async fn call_raw(app: &Router, method: Method, uri: &str) -> (StatusCode, HeaderMap, Bytes) {
@@ -69,7 +65,7 @@ async fn call_raw(app: &Router, method: Method, uri: &str) -> (StatusCode, Heade
 
 #[tokio::test]
 async fn root_and_spa_routes_serve_index_html() {
-    let app = setup_app().await;
+    let (app, _bk) = setup_app().await;
 
     for path in ["/", "/statistics", "/settings"] {
         let (status, headers, body) = call_raw(&app, Method::GET, path).await;
@@ -92,7 +88,7 @@ async fn root_and_spa_routes_serve_index_html() {
 
 #[tokio::test]
 async fn static_assets_and_fonts_served_with_mime_types() {
-    let app = setup_app().await;
+    let (app, _bk) = setup_app().await;
 
     let (status, headers, body) = call_raw(&app, Method::GET, "/styles.css").await;
     assert_eq!(status, StatusCode::OK);
@@ -139,7 +135,7 @@ async fn static_assets_and_fonts_served_with_mime_types() {
 
 #[tokio::test]
 async fn locales_index_lists_discovered_languages() {
-    let app = setup_app().await;
+    let (app, _bk) = setup_app().await;
 
     let (status, headers, body) = call_raw(&app, Method::GET, "/locales/index.json").await;
     assert_eq!(status, StatusCode::OK);
@@ -168,7 +164,7 @@ async fn locales_index_lists_discovered_languages() {
 
 #[tokio::test]
 async fn spa_routes_serve_html_while_unknown_api_and_assets_404() {
-    let app = setup_app().await;
+    let (app, _bk) = setup_app().await;
 
     // Unknown API route must return 404 JSON error
     let (status, headers, body) = call_raw(&app, Method::GET, "/api/nope").await;
@@ -342,7 +338,7 @@ fn all_es_module_imports_resolve_to_embedded_assets() {
 
 #[tokio::test]
 async fn html_has_security_headers() {
-    let app = setup_app().await;
+    let (app, _bk) = setup_app().await;
     let (_, headers, _) = call_raw(&app, Method::GET, "/").await;
     let h = |n: &str| headers.get(n).and_then(|v| v.to_str().ok()).unwrap_or("");
     assert_eq!(

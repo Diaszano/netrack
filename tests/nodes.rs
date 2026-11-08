@@ -158,6 +158,7 @@ impl SpeedProvider for DummyProvider {
 struct TestApp {
     app: Router,
     db: Db,
+    _bk: tempfile::TempDir,
 }
 
 impl TestApp {
@@ -166,15 +167,11 @@ impl TestApp {
         let factory: ProviderFactory = Arc::new(|_| Box::new(DummyProvider));
         let runner = Runner::new(db.clone(), factory);
         let (tx, rx) = watch::channel(());
-        let scheduler = Scheduler::spawn(
-            db.clone(),
-            runner.clone(),
-            rx,
-            tempfile::tempdir().unwrap().keep(),
-        );
+        let bk = tempfile::tempdir().unwrap();
+        let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx, bk.path().to_path_buf());
         let state = AppState::new(db.clone(), runner, tx, Arc::new(scheduler));
         let app = router(state);
-        Self { app, db }
+        Self { app, db, _bk: bk }
     }
 
     async fn request(

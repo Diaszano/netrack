@@ -457,3 +457,11 @@ test("load_view_data_recovers_config_for_servers_and_refreshes_status_for_overvi
   assert.equal(state.status.paused, true, "state.status.paused must be refreshed");
 });
 
+
+test("settings_backup_keep_is_extracted_and_zero_is_valid", () => {
+  for (const [raw, want] of [["0", 0], ["7", 7]]) {
+    const fd = new FormData();
+    fd.append("backupKeep", raw);
+    assert.strictEqual(extractSettingsFormValues(fd).backupKeep, want);
+  }
+});

@@ -119,6 +119,7 @@ struct TestApp {
     db: Db,
     runner: Runner,
     reload_tx: watch::Sender<()>,
+    _bk: tempfile::TempDir,
 }
 
 impl TestApp {
@@ -131,11 +132,12 @@ impl TestApp {
         };
         let runner = Runner::new(db.clone(), factory);
         let (reload_tx, reload_rx) = watch::channel(());
+        let bk = tempfile::tempdir().unwrap();
         let scheduler = Scheduler::spawn(
             db.clone(),
             runner.clone(),
             reload_rx,
-            tempfile::tempdir().unwrap().keep(),
+            bk.path().to_path_buf(),
         );
         let state = AppState::new(
             db.clone(),
@@ -149,6 +151,7 @@ impl TestApp {
             db,
             runner,
             reload_tx,
+            _bk: bk,
         }
     }
 
