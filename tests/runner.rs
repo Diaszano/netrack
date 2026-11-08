@@ -125,9 +125,11 @@ async fn slow_test_emits_degraded_right_after_finished() {
         RunEvent::Degraded {
             id: eid,
             expected_download,
+            threshold_pct,
             ..
         } => {
             assert_eq!(eid, id);
+            assert_eq!(threshold_pct, 70);
             assert_eq!(expected_download, 100.0);
         }
         other => panic!("unexpected {other:?}"),

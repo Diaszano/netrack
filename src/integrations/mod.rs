@@ -446,11 +446,7 @@ impl IntegrationDispatcher {
                                         };
                                         dispatch_event(&self.db, &self.client, &ev).await;
                                     }
-                                    RunEvent::Degraded { id, metrics, expected_download, expected_upload } => {
-                                        let threshold_pct = match crate::db::config::load(&self.db).await {
-                                            Ok(cfg) => cfg.degraded_threshold_pct,
-                                            Err(_) => 70,
-                                        };
+                                    RunEvent::Degraded { id, metrics, expected_download, expected_upload, threshold_pct } => {
                                         let ev = IntegrationEvent::SpeedtestDegraded {
                                             id,
                                             metrics,

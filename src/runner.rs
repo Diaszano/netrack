@@ -37,6 +37,7 @@ pub enum RunEvent {
         metrics: Metrics,
         expected_download: f64,
         expected_upload: f64,
+        threshold_pct: u32,
     },
     /// `id` is `None` (serialized as `null`) when no row could be stored.
     Failed {
@@ -191,6 +192,7 @@ impl Runner {
                         metrics,
                         expected_download: cfg.expected_download,
                         expected_upload: cfg.expected_upload,
+                        threshold_pct: cfg.degraded_threshold_pct,
                     });
                 }
                 if let Err(e) = self.update_expected().await {
@@ -313,6 +315,15 @@ mod tests {
         assert!(is_degraded(&m(69.0, 50.0), &cfg(100.0, 50.0)));
         assert!(is_degraded(&m(100.0, 34.0), &cfg(100.0, 50.0)));
         assert!(!is_degraded(&m(70.0, 35.0), &cfg(100.0, 50.0)));
+    }
+
+    #[test]
+    fn threshold_is_used() {
+        let mut c = cfg(100.0, 0.0);
+        c.degraded_threshold_pct = 50;
+        assert!(!is_degraded(&m(60.0, 0.0), &c));
+        c.degraded_threshold_pct = 70;
+        assert!(is_degraded(&m(60.0, 0.0), &c));
     }
 
     #[test]
