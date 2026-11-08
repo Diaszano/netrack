@@ -50,6 +50,9 @@ pub struct AppState {
     pub login_lockout: Arc<crate::auth::lockout::Lockout>,
     /// Honor `X-Forwarded-For` for the client IP (only safe behind a reverse proxy).
     pub trust_proxy: bool,
+    /// (password hash, password) last verified via Bearer: a primary node resends the raw
+    /// password on every proxied request, which must not cost Argon2 or lockout attempts.
+    pub(crate) bearer_cache: Arc<Mutex<Option<(String, String)>>>,
 }
 
 impl AppState {
@@ -81,6 +84,7 @@ impl AppState {
                 .expect("static reqwest client configuration is valid"),
             login_lockout: Arc::default(),
             trust_proxy: false,
+            bearer_cache: Arc::default(),
         }
     }
 

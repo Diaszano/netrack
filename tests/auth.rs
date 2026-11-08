@@ -806,3 +806,57 @@ async fn concurrent_wrong_logins_cannot_exceed_the_limit() {
         .count();
     assert_eq!(locked, 5);
 }
+
+#[tokio::test]
+async fn cached_bearer_password_survives_parallel_requests() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    let get = || {
+        app.request(
+            Method::GET,
+            "/api/speedtests",
+            None,
+            None,
+            Some("Bearer mypassword123"),
+        )
+    };
+    assert_eq!(get().await.0, StatusCode::OK);
+    let results = futures::future::join_all((0..10).map(|_| get())).await;
+    assert!(results.iter().all(|r| r.0 == StatusCode::OK));
+}
+
+#[tokio::test]
+async fn old_bearer_password_is_rejected_after_change() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    let (status, _, _) = app
+        .request(
+            Method::GET,
+            "/api/speedtests",
+            None,
+            None,
+            Some("Bearer mypassword123"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = app
+        .request(
+            Method::POST,
+            "/api/auth/password",
+            Some(json!({ "password": "anotherpassword456", "mode": "protected" })),
+            None,
+            Some("Bearer mypassword123"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = app
+        .request(
+            Method::GET,
+            "/api/speedtests",
+            None,
+            None,
+            Some("Bearer mypassword123"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

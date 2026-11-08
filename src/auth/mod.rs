@@ -95,6 +95,14 @@ pub async fn check_password(
     }
 }
 
+fn ct_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0, |acc, (x, y)| acc | (x ^ y))
+            == 0
+}
+
 pub fn verify_password(password: &str, hash: &str) -> bool {
     if hash.is_empty() {
         return false;
@@ -234,17 +242,34 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
     if !authenticated && let Some(t) = &bearer_token {
         authenticated = validate_session(&state.db, t).await.unwrap_or(false);
         if !authenticated && cfg.password_mode != PasswordMode::None {
-            let ip = client_ip(
-                &state,
-                req.headers(),
-                req.extensions()
-                    .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-                    .map(|c| c.0),
-            );
-            match check_password(&state, ip, t.clone(), cfg.password_hash.clone()).await {
-                PasswordCheck::Ok => authenticated = true,
-                PasswordCheck::Bad => {}
-                PasswordCheck::Locked(w) => return ApiError::too_many_attempts(w).into_response(),
+            // A new password means a new hash, so a stale entry never matches.
+            let cached = state
+                .bearer_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .is_some_and(|(h, p)| *h == cfg.password_hash && ct_eq(p, t));
+            if cached {
+                authenticated = true;
+            } else {
+                let ip = client_ip(
+                    &state,
+                    req.headers(),
+                    req.extensions()
+                        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                        .map(|c| c.0),
+                );
+                match check_password(&state, ip, t.clone(), cfg.password_hash.clone()).await {
+                    PasswordCheck::Ok => {
+                        authenticated = true;
+                        *state.bearer_cache.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some((cfg.password_hash.clone(), t.clone()));
+                    }
+                    PasswordCheck::Bad => {}
+                    PasswordCheck::Locked(w) => {
+                        return ApiError::too_many_attempts(w).into_response();
+                    }
+                }
             }
         }
     }
