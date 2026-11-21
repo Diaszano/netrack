@@ -14,11 +14,13 @@ Monitor de velocidade de internet auto-hospedado, escrito em Rust. Executa teste
   - Internacionalização automática (`pt-BR` e `en`) extensível via arquivos JSON em `web/locales/`.
 - **Segurança e Modos de Acesso**:
   - Níveis de proteção por senha (Argon2id + sessões em SQLite): `none` (sem senha), `public` (leitura pública, alterações protegidas) e `protected` (tudo exige login).
-- **Notificações e Integrações (8 canais × 6 eventos)**:
+- **Notificações e Integrações (8 canais × 7 eventos)**:
   - Canais: **Discord**, **Telegram**, **Pushover**, **Gotify**, **ntfy**, **Webhook genérico**, **InfluxDB v2** e **Healthchecks**.
-  - Eventos: `speedtest.started`, `speedtest.finished`, `speedtest.failed`, `minute.passed`, `config.updated`, `expected.updated`.
+  - Eventos: `speedtest.started`, `speedtest.finished`, `speedtest.failed`, `speedtest.degraded`, `minute.passed`, `config.updated`, `expected.updated`.
+  - Segredos das integrações voltam mascarados como `***` nas respostas da API; enviar `***` em uma atualização mantém o valor armazenado.
 - **Observabilidade e Dados**:
   - Endpoint **Prometheus** (`/api/prometheus/metrics`) com suporte a Basic Auth.
+  - Métricas das últimas 24h: `netrack_download_avg_24h_mbps`, `netrack_upload_avg_24h_mbps`, `netrack_ping_avg_24h_ms` e `netrack_tests_24h{result="ok"|"failed"}`.
   - Exportação/importação em **JSON** e **CSV**, além de importação compatível com **MySpeed**.
   - Imagem **Open Graph** dinâmica (`/api/opengraph/image`) com o último resultado.
 - **Multi-instância (Nós Remotos)**:
@@ -42,7 +44,9 @@ O container roda como UID 65534 (`nobody`). O diretório montado em `/data` prec
 | Variável | Padrão | Descrição |
 |---|---|---|
 | `NETRACK_PORT` | `5216` | Porta HTTP (escuta em `0.0.0.0` e `[::]`) |
-| `NETRACK_DATA_DIR` | `/data` | Diretório do banco SQLite e binário opcional do Ookla |
+| `NETRACK_DATA_DIR` | `/data` | Diretório do banco SQLite, binário opcional do Ookla e backups diários (`backups/netrack-AAAA-MM-DD.db`, quantidade em `backup_keep`) |
+| `NETRACK_TRUST_PROXY` | `false` | Usa o último IP de `X-Forwarded-For` (o anexado pelo proxy) como IP do cliente no bloqueio de login (5 falhas em 15 min). Ative só atrás de um proxy reverso confiável |
+| `NETRACK_SECURE_COOKIE` | `false` | Adiciona `Secure` ao cookie de sessão (login e logout). Ative só se o acesso for por HTTPS, senão o navegador descarta o cookie |
 | `TZ` | `UTC` | Fuso horário usado no agendamento e estatísticas (ex.: `America/Sao_Paulo`); vazio = `UTC` |
 | `RUN_TEST_ON_STARTUP` | `false` | Executa um teste imediatamente ao iniciar |
 | `PREVIEW_MODE` | `false` | Modo demonstração: bloqueia mutações (`403 Forbidden`) e exibe aviso na UI |

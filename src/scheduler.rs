@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -9,8 +10,8 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::db::Db;
-use crate::db::config;
 use crate::db::tests_repo::{self, TestKind};
+use crate::db::{backup, config};
 use crate::runner::{RunError, Runner};
 
 const MAX_OFFSET: Duration = Duration::from_secs(300);
@@ -60,14 +61,20 @@ pub struct Scheduler {
 impl Scheduler {
     /// `reload` must be signalled after any config change so the next fire
     /// time is recomputed from fresh config.
-    pub fn spawn(db: Db, runner: Runner, reload: watch::Receiver<()>) -> Scheduler {
-        Scheduler::spawn_with_clock(db, runner, reload, Arc::new(Utc::now))
+    pub fn spawn(
+        db: Db,
+        runner: Runner,
+        reload: watch::Receiver<()>,
+        data_dir: PathBuf,
+    ) -> Scheduler {
+        Scheduler::spawn_with_clock(db, runner, reload, data_dir, Arc::new(Utc::now))
     }
 
     pub fn spawn_with_clock(
         db: Db,
         runner: Runner,
         reload: watch::Receiver<()>,
+        data_dir: PathBuf,
         clock: Clock,
     ) -> Scheduler {
         let next_run = Arc::new(Mutex::new(None));
@@ -79,7 +86,7 @@ impl Scheduler {
                 next_run.clone(),
                 clock.clone(),
             )),
-            tokio::spawn(retention_loop(db, clock)),
+            tokio::spawn(retention_loop(db, data_dir, clock)),
         ];
         Scheduler { next_run, tasks }
     }
@@ -210,9 +217,9 @@ fn fire(runner: &Runner) {
     });
 }
 
-async fn retention_loop(db: Db, clock: Clock) {
+async fn retention_loop(db: Db, data_dir: PathBuf, clock: Clock) {
     loop {
-        if let Err(e) = purge(&db, clock()).await {
+        if let Err(e) = purge(&db, &data_dir, clock()).await {
             tracing::error!(error = %e, "retention job failed");
         }
         let now = clock().with_timezone(&db.tz());
@@ -228,12 +235,20 @@ async fn retention_loop(db: Db, clock: Clock) {
     }
 }
 
-async fn purge(db: &Db, now: DateTime<Utc>) -> anyhow::Result<()> {
+async fn purge(db: &Db, data_dir: &Path, now: DateTime<Utc>) -> anyhow::Result<()> {
     let cfg = config::load(db).await.context("loading config")?;
+    // A failed backup must not block retention or the session purge.
+    let today = now.with_timezone(&db.tz()).date_naive();
+    match backup::run(db, data_dir, today, cfg.backup_keep).await {
+        Ok(Some(p)) => tracing::info!(path = %p.display(), "database backup ready"),
+        Ok(None) => {}
+        Err(e) => tracing::error!(error = %e, "database backup failed"),
+    }
     let removed = tests_repo::delete_older_than(db, cfg.retention_days, now).await?;
     if removed > 0 {
         tracing::info!(removed, "retention removed old speed tests");
     }
+    crate::auth::delete_expired_sessions(db, now.timestamp()).await?;
     Ok(())
 }
 

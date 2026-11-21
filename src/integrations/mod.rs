@@ -3,7 +3,7 @@ pub mod routes;
 
 use std::time::Duration;
 
-use rusqlite::params;
+use rusqlite::{OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, watch};
@@ -27,6 +27,7 @@ pub const SUPPORTED_EVENTS: &[&str] = &[
     "speedtest.started",
     "speedtest.finished",
     "speedtest.failed",
+    "speedtest.degraded",
     "minute.passed",
     "config.updated",
     "expected.updated",
@@ -57,6 +58,14 @@ pub enum IntegrationEvent {
         provider: Option<String>,
         timestamp: i64,
     },
+    SpeedtestDegraded {
+        id: i64,
+        metrics: Metrics,
+        expected_download: f64,
+        expected_upload: f64,
+        threshold_pct: u32,
+        timestamp: i64,
+    },
     SpeedtestFailed {
         id: Option<i64>,
         error: String,
@@ -84,6 +93,7 @@ impl IntegrationEvent {
         match self {
             IntegrationEvent::SpeedtestStarted { .. } => "speedtest.started",
             IntegrationEvent::SpeedtestFinished { .. } => "speedtest.finished",
+            IntegrationEvent::SpeedtestDegraded { .. } => "speedtest.degraded",
             IntegrationEvent::SpeedtestFailed { .. } => "speedtest.failed",
             IntegrationEvent::MinutePassed { .. } => "minute.passed",
             IntegrationEvent::ConfigUpdated { .. } => "config.updated",
@@ -92,10 +102,29 @@ impl IntegrationEvent {
         }
     }
 
+    /// Human-readable summary of a degraded test, shared by the chat channels.
+    pub fn degraded_summary(&self) -> Option<String> {
+        let IntegrationEvent::SpeedtestDegraded {
+            metrics,
+            expected_download,
+            expected_upload,
+            threshold_pct,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        Some(format!(
+            "↓ {:.2} Mbps (expected {expected_download:.2}) / ↑ {:.2} Mbps (expected {expected_upload:.2}), below {threshold_pct}%",
+            metrics.download, metrics.upload
+        ))
+    }
+
     pub fn timestamp(&self) -> i64 {
         match self {
             IntegrationEvent::SpeedtestStarted { timestamp, .. } => *timestamp,
             IntegrationEvent::SpeedtestFinished { timestamp, .. } => *timestamp,
+            IntegrationEvent::SpeedtestDegraded { timestamp, .. } => *timestamp,
             IntegrationEvent::SpeedtestFailed { timestamp, .. } => *timestamp,
             IntegrationEvent::MinutePassed { timestamp, .. } => *timestamp,
             IntegrationEvent::ConfigUpdated { timestamp, .. } => *timestamp,
@@ -134,6 +163,29 @@ impl IntegrationEvent {
                     "provider": provider,
                 })
             }
+            IntegrationEvent::SpeedtestDegraded {
+                id,
+                metrics,
+                expected_download,
+                expected_upload,
+                threshold_pct,
+                ..
+            } => {
+                json!({
+                    "id": id,
+                    "metrics": {
+                        "download": metrics.download,
+                        "upload": metrics.upload,
+                        "ping": metrics.ping,
+                        "jitter": metrics.jitter,
+                    },
+                    "expected": {
+                        "download": expected_download,
+                        "upload": expected_upload,
+                    },
+                    "thresholdPct": threshold_pct,
+                })
+            }
             IntegrationEvent::SpeedtestFailed { id, error, .. } => {
                 json!({
                     "id": id,
@@ -167,66 +219,42 @@ impl IntegrationEvent {
     }
 }
 
+const INTEGRATION_COLUMNS: &str = "id, name, channel_type, config_json, events_json, enabled";
+
+fn map_integration(r: &Row) -> rusqlite::Result<Integration> {
+    let config_json: String = r.get(3)?;
+    let events_json: String = r.get(4)?;
+    let enabled: i64 = r.get(5)?;
+    Ok(Integration {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        channel_type: r.get(2)?,
+        config: serde_json::from_str(&config_json).unwrap_or(Value::Null),
+        events: serde_json::from_str(&events_json).unwrap_or_default(),
+        enabled: enabled != 0,
+    })
+}
+
 pub async fn list(db: &Db) -> anyhow::Result<Vec<Integration>> {
     db.call(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, name, channel_type, config_json, events_json, enabled FROM integrations ORDER BY id ASC",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            let id: i64 = r.get(0)?;
-            let name: String = r.get(1)?;
-            let channel_type: String = r.get(2)?;
-            let config_json: String = r.get(3)?;
-            let events_json: String = r.get(4)?;
-            let enabled: i64 = r.get(5)?;
-            Ok((id, name, channel_type, config_json, events_json, enabled))
-        })?;
-
-        let mut list = Vec::new();
-        for row in rows {
-            let (id, name, channel_type, config_json, events_json, enabled) = row?;
-            let config: Value = serde_json::from_str(&config_json).unwrap_or(Value::Null);
-            let events: Vec<String> = serde_json::from_str(&events_json).unwrap_or_default();
-            list.push(Integration {
-                id,
-                name,
-                channel_type,
-                config,
-                events,
-                enabled: enabled != 0,
-            });
-        }
-        Ok(list)
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {INTEGRATION_COLUMNS} FROM integrations ORDER BY id ASC"
+        ))?;
+        let rows = stmt.query_map([], map_integration)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     })
     .await
 }
 
 pub async fn get(db: &Db, id: i64) -> anyhow::Result<Option<Integration>> {
     db.call(move |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, name, channel_type, config_json, events_json, enabled FROM integrations WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query(params![id])?;
-        if let Some(r) = rows.next()? {
-            let id: i64 = r.get(0)?;
-            let name: String = r.get(1)?;
-            let channel_type: String = r.get(2)?;
-            let config_json: String = r.get(3)?;
-            let events_json: String = r.get(4)?;
-            let enabled: i64 = r.get(5)?;
-            let config: Value = serde_json::from_str(&config_json).unwrap_or(Value::Null);
-            let events: Vec<String> = serde_json::from_str(&events_json).unwrap_or_default();
-            Ok(Some(Integration {
-                id,
-                name,
-                channel_type,
-                config,
-                events,
-                enabled: enabled != 0,
-            }))
-        } else {
-            Ok(None)
-        }
+        Ok(conn
+            .query_row(
+                &format!("SELECT {INTEGRATION_COLUMNS} FROM integrations WHERE id = ?1"),
+                params![id],
+                map_integration,
+            )
+            .optional()?)
     })
     .await
 }
@@ -418,6 +446,17 @@ impl IntegrationDispatcher {
                                         };
                                         dispatch_event(&self.db, &self.client, &ev).await;
                                     }
+                                    RunEvent::Degraded { id, metrics, expected_download, expected_upload, threshold_pct } => {
+                                        let ev = IntegrationEvent::SpeedtestDegraded {
+                                            id,
+                                            metrics,
+                                            expected_download,
+                                            expected_upload,
+                                            threshold_pct,
+                                            timestamp: now,
+                                        };
+                                        dispatch_event(&self.db, &self.client, &ev).await;
+                                    }
                                     RunEvent::Failed { id, error } => {
                                         let ev = IntegrationEvent::SpeedtestFailed {
                                             id,
@@ -465,5 +504,76 @@ impl IntegrationDispatcher {
                 }
             }
         })
+    }
+}
+
+pub const SECRET_KEYS: &[&str] = &[
+    "bot_token",
+    "token",
+    "app_token",
+    "user_key",
+    "api_token",
+    "auth_token",
+    "secret",
+    "webhook_url",
+    "ping_url",
+    "headers",
+    "password",
+];
+pub const MASK: &str = "***";
+
+/// Replaces every non-empty secret value with `MASK` for API responses.
+pub fn masked(config: &Value) -> Value {
+    let mut out = config.clone();
+    if let Some(obj) = out.as_object_mut() {
+        for k in SECRET_KEYS {
+            if let Some(v) = obj.get_mut(*k)
+                && !v.is_null()
+                && v.as_str() != Some("")
+            {
+                *v = Value::String(MASK.into());
+            }
+        }
+    }
+    out
+}
+
+/// Restores stored values for secret keys the client sent back as `MASK`.
+pub fn unmask(mut new: Value, old: &Value) -> Value {
+    if let Some(obj) = new.as_object_mut() {
+        for k in SECRET_KEYS {
+            if obj.get(*k).and_then(Value::as_str) == Some(MASK) {
+                match old.get(*k) {
+                    Some(v) => obj.insert((*k).into(), v.clone()),
+                    None => obj.remove(*k),
+                };
+            }
+        }
+    }
+    new
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn masked_hides_non_empty_secrets_only() {
+        assert_eq!(
+            masked(&json!({"bot_token":"abc","chat_id":"1"})),
+            json!({"bot_token":"***","chat_id":"1"})
+        );
+        assert_eq!(masked(&json!({"token":""})), json!({"token":""}));
+    }
+
+    #[test]
+    fn unmask_restores_stored_secret() {
+        assert_eq!(
+            unmask(
+                json!({"bot_token":"***","chat_id":"2"}),
+                &json!({"bot_token":"abc","chat_id":"1"})
+            ),
+            json!({"bot_token":"abc","chat_id":"2"})
+        );
     }
 }

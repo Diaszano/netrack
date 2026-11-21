@@ -2,7 +2,7 @@
 // Netrack web application wiring: router, event delegation, live SSE and polling
 
 import { createApiClient } from "./api.js";
-import { createInitialState, applyRunEvent, parseRoute } from "./state.js";
+import { createInitialState, applyRunEvent, parseRoute, shouldLoadNodes } from "./state.js";
 import { resolveLocale, createTranslator, escapeHtml } from "./i18n.js";
 import { formatBytes, formatNumber, formatDateTime, dateRangeForPreset } from "./format.js";
 import { renderOverview } from "./views/overview.js";
@@ -544,6 +544,8 @@ export function extractSettingsFormValues(formData) {
   const rawUl = formData.get("expectedUpload");
   const rawPing = formData.get("expectedPing");
   const rawRetention = formData.get("retentionDays");
+  const rawPct = formData.get("degradedThresholdPct");
+  const rawBackup = formData.get("backupKeep");
 
   return {
     cron: formData.get("cron") ?? "",
@@ -554,6 +556,8 @@ export function extractSettingsFormValues(formData) {
     expectedDownload: rawDl !== "" && rawDl != null ? Number(rawDl) : null,
     expectedUpload: rawUl !== "" && rawUl != null ? Number(rawUl) : null,
     expectedPing: rawPing !== "" && rawPing != null ? Number(rawPing) : null,
+    degradedThresholdPct: rawPct !== "" && rawPct != null ? Number(rawPct) : null,
+    backupKeep: rawBackup !== "" && rawBackup != null ? Number(rawBackup) : null,
   };
 }
 
@@ -1057,11 +1061,11 @@ function setupEventDelegation() {
         const res = await apiClient.importData(text, ct);
         await loadViewData("settings");
         const count = res?.imported ?? 0;
-        const msg = t("settings.importSuccess", { count });
-        state.banner = {
-          kind: "info",
-          text: msg !== "settings.importSuccess" ? msg : `${count} registros importados com sucesso!`,
-        };
+        const skipped = res?.skipped ?? 0;
+        const msg = skipped
+          ? t("data.importSkipped", { imported: count, skipped })
+          : t("settings.importSuccess", { count });
+        state.banner = { kind: "info", text: msg };
         render();
       } catch (err) {
         state.banner = { kind: "error", text: err.message || "Falha na importação" };
@@ -1319,7 +1323,7 @@ async function main() {
     apiClient.getSystemStatus().catch(() => null),
     apiClient.getStatus().catch(() => null),
     apiClient.getConfig().catch(() => null),
-    apiClient.listNodes().catch(() => []),
+    shouldLoadNodes(state.auth) ? apiClient.listNodes().catch(() => []) : [],
   ]);
 
   if (sys) state.system = sys;

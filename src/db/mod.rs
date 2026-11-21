@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod config;
 mod migrations;
 pub mod stats;

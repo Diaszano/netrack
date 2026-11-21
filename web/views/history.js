@@ -7,6 +7,7 @@ import {
   formatDateTime,
   formatNumber,
 } from "../format.js";
+import { renderServerCell, renderStatusBadge } from "./test-row.js";
 
 /**
  * Renders the History view.
@@ -36,7 +37,7 @@ export function renderHistory(state, { t = (k) => k } = {}) {
   } else {
     tableRowsHtml = rows
       .map((row) => {
-        const timeMs = row.createdAt ?? row.created_at ?? row.t;
+        const timeMs = row.createdAt ?? row.t;
         const timeStr = formatDateTime(timeMs, locale, tz);
 
         // Kind badge: auto vs custom (manual)
@@ -47,19 +48,7 @@ export function renderHistory(state, { t = (k) => k } = {}) {
         const kindBadgeClass = isAuto ? "badge badge-auto" : "badge badge-manual";
         const kindBadge = `<span class="${kindBadgeClass}">${escapeHtml(kindLabel)}</span>`;
 
-        // Provider & Server
-        const provider = row.provider ? escapeHtml(row.provider) : "—";
-        const serverName = (row.serverName ?? row.server_name) ? escapeHtml(row.serverName ?? row.server_name) : "";
-        const serverHost = (row.serverHost ?? row.server_host) ? escapeHtml(row.serverHost ?? row.server_host) : "";
-        let serverSub = "";
-        if (serverName && serverHost) {
-          serverSub = `${serverName} (${serverHost})`;
-        } else if (serverName) {
-          serverSub = serverName;
-        } else if (serverHost) {
-          serverSub = serverHost;
-        }
-        const serverCell = `<div>${provider}</div>${serverSub ? `<div class="card-subtitle">${serverSub}</div>` : ""}`;
+        const serverCell = renderServerCell(row);
 
         // Metrics: Ping, Jitter, Download, Upload, Duration
         const isFailed = Boolean(row.error);
@@ -72,16 +61,10 @@ export function renderHistory(state, { t = (k) => k } = {}) {
           ? `${formatNumber(row.duration, locale, Number.isInteger(row.duration) ? 0 : 1)} s`
           : "—";
 
-        // Status badge + escaped error details
-        let statusCell = "";
-        if (isFailed) {
-          const errEscaped = escapeHtml(row.error);
-          const failLabel = escapeHtml(t("status.failed") || "falha");
-          statusCell = `<span class="badge badge-falha" style="color: #FF8FB1;" title="${errEscaped}">${failLabel}</span> <span class="error-detail" title="${errEscaped}" style="font-size: 11px; color: var(--secondary); margin-left: 4px;">${errEscaped}</span>`;
-        } else {
-          const okLabel = escapeHtml(t("status.ok") || "ok");
-          statusCell = `<span class="badge badge-ok" style="color: #3FD6C2;">${okLabel}</span>`;
-        }
+        const errEscaped = isFailed ? escapeHtml(row.error) : "";
+        const statusCell = renderStatusBadge(row, { t }) + (isFailed
+          ? ` <span class="error-detail" title="${errEscaped}" style="font-size: 11px; color: var(--secondary); margin-left: 4px;">${errEscaped}</span>`
+          : "");
 
         // Delete action button
         const delTitle = escapeHtml(t("common.delete") || "Excluir");

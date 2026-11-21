@@ -62,6 +62,12 @@ impl MockNodeServer {
                     ]))
                 }),
             )
+            .route(
+                "/api/cookie",
+                axum::routing::get(|| async {
+                    ([("set-cookie", "netrack_session=remote; Path=/")], "ok")
+                }),
+            )
             .fallback(move |req: axum::extract::Request| {
                 let reqs = reqs.clone();
                 async move {
@@ -152,6 +158,7 @@ impl SpeedProvider for DummyProvider {
 struct TestApp {
     app: Router,
     db: Db,
+    _bk: tempfile::TempDir,
 }
 
 impl TestApp {
@@ -160,10 +167,11 @@ impl TestApp {
         let factory: ProviderFactory = Arc::new(|_| Box::new(DummyProvider));
         let runner = Runner::new(db.clone(), factory);
         let (tx, rx) = watch::channel(());
-        let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx);
+        let bk = tempfile::tempdir().unwrap();
+        let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx, bk.path().to_path_buf());
         let state = AppState::new(db.clone(), runner, tx, Arc::new(scheduler));
         let app = router(state);
-        Self { app, db }
+        Self { app, db, _bk: bk }
     }
 
     async fn request(
@@ -305,6 +313,9 @@ async fn test_node_crud_and_validation() {
     assert_eq!(fetched["id"], id);
     assert_eq!(fetched["name"], "Node Alpha");
     assert_eq!(fetched["hasPassword"], true);
+    assert!(fetched["createdAt"].is_number());
+    assert!(fetched.get("has_password").is_none());
+    assert!(fetched.get("created_at").is_none());
     assert!(fetched.get("password").is_none() || fetched["password"].is_null());
 
     // 6. Update node name and clear password
@@ -528,11 +539,11 @@ async fn test_transparent_proxy_get_and_post() {
             "Proxy must inject Authorization header"
         );
         assert!(
-            cookie_hdr
+            !cookie_hdr
                 .map(|s| s.as_str())
                 .unwrap_or("")
-                .contains("netrack_session=proxy-secret-token"),
-            "Proxy must inject netrack_session cookie"
+                .contains("proxy-secret-token"),
+            "Proxy must not leak the node password as a cookie"
         );
     }
 
@@ -573,4 +584,60 @@ async fn test_transparent_proxy_get_and_post() {
         .await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(err["error"].as_str().unwrap().contains("proxy"));
+}
+
+#[tokio::test]
+async fn proxy_strips_remote_set_cookie() {
+    let mock = MockNodeServer::start().await;
+    let app = TestApp::new().await;
+    let (_, _, created) = app
+        .request(
+            Method::POST,
+            "/api/nodes",
+            Some(json!({ "name": "Cookie Node", "url": mock.url() })),
+            None,
+            None,
+        )
+        .await;
+    let id = created["id"].as_i64().unwrap();
+
+    let (status, headers, _) = app
+        .request(
+            Method::GET,
+            &format!("/api/nodes/{id}/proxy/cookie"),
+            None,
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.get("set-cookie").is_none());
+}
+
+#[tokio::test]
+async fn proxy_to_unreachable_node_fails_fast() {
+    let app = TestApp::new().await;
+    let (_, _, created) = app
+        .request(
+            Method::POST,
+            "/api/nodes",
+            Some(json!({ "name": "Dead Node", "url": "http://10.255.255.1:9" })),
+            None,
+            None,
+        )
+        .await;
+    let id = created["id"].as_i64().unwrap();
+
+    let started = std::time::Instant::now();
+    let (status, _, _) = app
+        .request(
+            Method::GET,
+            &format!("/api/nodes/{id}/proxy/system/status"),
+            None,
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(started.elapsed() < std::time::Duration::from_secs(7));
 }

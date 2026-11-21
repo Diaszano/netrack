@@ -48,6 +48,7 @@ impl SpeedProvider for DummyProvider {
 struct TestApp {
     app: Router,
     db: Db,
+    _bk: tempfile::TempDir,
 }
 
 impl TestApp {
@@ -64,14 +65,15 @@ impl TestApp {
         let factory: ProviderFactory = Arc::new(|_| Box::new(DummyProvider));
         let runner = Runner::new(db.clone(), factory);
         let (tx, rx) = watch::channel(());
-        let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx);
+        let bk = tempfile::tempdir().unwrap();
+        let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx, bk.path().to_path_buf());
         let mut state = AppState::new(db.clone(), runner, tx, Arc::new(scheduler))
             .with_preview(preview_mode, preview_message);
         if let Some(url) = release_url {
             state = state.with_release_url(url);
         }
         let app = router(state);
-        Self { app, db }
+        Self { app, db, _bk: bk }
     }
 
     async fn get(

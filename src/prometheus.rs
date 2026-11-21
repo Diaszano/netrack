@@ -4,10 +4,12 @@ use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use chrono::{Duration, Utc};
 
 use crate::api::{ApiError, AppState};
-use crate::auth::{AuthContext, verify_password};
+use crate::auth::{AuthContext, PasswordCheck, check_password, client_ip};
 use crate::db::config::{self, PasswordMode};
+use crate::db::stats::{self, Window24h};
 use crate::db::tests_repo::{self, SpeedtestRow};
 
 fn decode_base64(input: &str) -> Option<Vec<u8>> {
@@ -69,73 +71,85 @@ fn format_labels(row: &SpeedtestRow) -> String {
     format!("provider=\"{provider}\",server_id=\"{server_id}\",server_name=\"{server_name}\"")
 }
 
-pub fn format_metrics(latest: Option<&SpeedtestRow>) -> String {
+pub fn format_metrics(latest: Option<&SpeedtestRow>, window: &Window24h) -> String {
+    type Family = (&'static str, &'static str, fn(&SpeedtestRow) -> String);
+    let families: [Family; 7] = [
+        (
+            "netrack_ping_latency_ms",
+            "Ping latency in milliseconds",
+            |r| r.ping.unwrap_or(0.0).to_string(),
+        ),
+        ("netrack_jitter_ms", "Jitter in milliseconds", |r| {
+            r.jitter.unwrap_or(0.0).to_string()
+        }),
+        (
+            "netrack_download_speed_mbps",
+            "Download speed in megabits per second",
+            |r| r.download.unwrap_or(0.0).to_string(),
+        ),
+        (
+            "netrack_upload_speed_mbps",
+            "Upload speed in megabits per second",
+            |r| r.upload.unwrap_or(0.0).to_string(),
+        ),
+        (
+            "netrack_test_duration_seconds",
+            "Duration of the speed test in seconds",
+            |r| r.duration.unwrap_or(0.0).to_string(),
+        ),
+        (
+            "netrack_last_test_timestamp_seconds",
+            "Timestamp of the last speed test in seconds",
+            |r| (r.created_at / 1000).to_string(),
+        ),
+        (
+            "netrack_test_success",
+            "Whether the last speed test succeeded (1) or failed (0)",
+            |r| if r.error.is_none() { "1" } else { "0" }.to_string(),
+        ),
+    ];
+
     let mut out = String::new();
-
-    out.push_str("# HELP netrack_ping_latency_ms Ping latency in milliseconds\n");
-    out.push_str("# TYPE netrack_ping_latency_ms gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.ping.unwrap_or(0.0);
-        out.push_str(&format!("netrack_ping_latency_ms{{{labels}}} {val}\n"));
+    for (name, help, value) in families {
+        out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} gauge\n"));
+        if let Some(row) = latest {
+            let labels = format_labels(row);
+            out.push_str(&format!("{name}{{{labels}}} {}\n", value(row)));
+        }
     }
 
-    out.push_str("# HELP netrack_jitter_ms Jitter in milliseconds\n");
-    out.push_str("# TYPE netrack_jitter_ms gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.jitter.unwrap_or(0.0);
-        out.push_str(&format!("netrack_jitter_ms{{{labels}}} {val}\n"));
+    let avgs = [
+        (
+            "netrack_download_avg_24h_mbps",
+            "Average download speed of successful tests in the last 24 hours, in megabits per second",
+            window.avg_download,
+        ),
+        (
+            "netrack_upload_avg_24h_mbps",
+            "Average upload speed of successful tests in the last 24 hours, in megabits per second",
+            window.avg_upload,
+        ),
+        (
+            "netrack_ping_avg_24h_ms",
+            "Average ping of successful tests in the last 24 hours, in milliseconds",
+            window.avg_ping,
+        ),
+    ];
+    for (name, help, avg) in avgs {
+        out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} gauge\n"));
+        if let Some(v) = avg {
+            out.push_str(&format!("{name} {v}\n"));
+        }
     }
 
-    out.push_str("# HELP netrack_download_speed_mbps Download speed in megabits per second\n");
-    out.push_str("# TYPE netrack_download_speed_mbps gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.download.unwrap_or(0.0);
-        out.push_str(&format!("netrack_download_speed_mbps{{{labels}}} {val}\n"));
+    let name = "netrack_tests_24h";
+    out.push_str(&format!(
+        "# HELP {name} Number of speed tests in the last 24 hours by result\n# TYPE {name} gauge\n"
+    ));
+    if window.ok + window.failed > 0 {
+        out.push_str(&format!("{name}{{result=\"ok\"}} {}\n", window.ok));
+        out.push_str(&format!("{name}{{result=\"failed\"}} {}\n", window.failed));
     }
-
-    out.push_str("# HELP netrack_upload_speed_mbps Upload speed in megabits per second\n");
-    out.push_str("# TYPE netrack_upload_speed_mbps gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.upload.unwrap_or(0.0);
-        out.push_str(&format!("netrack_upload_speed_mbps{{{labels}}} {val}\n"));
-    }
-
-    out.push_str("# HELP netrack_test_duration_seconds Duration of the speed test in seconds\n");
-    out.push_str("# TYPE netrack_test_duration_seconds gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.duration.unwrap_or(0.0);
-        out.push_str(&format!(
-            "netrack_test_duration_seconds{{{labels}}} {val}\n"
-        ));
-    }
-
-    out.push_str(
-        "# HELP netrack_last_test_timestamp_seconds Timestamp of the last speed test in seconds\n",
-    );
-    out.push_str("# TYPE netrack_last_test_timestamp_seconds gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = row.created_at / 1000;
-        out.push_str(&format!(
-            "netrack_last_test_timestamp_seconds{{{labels}}} {val}\n"
-        ));
-    }
-
-    out.push_str(
-        "# HELP netrack_test_success Whether the last speed test succeeded (1) or failed (0)\n",
-    );
-    out.push_str("# TYPE netrack_test_success gauge\n");
-    if let Some(row) = latest {
-        let labels = format_labels(row);
-        let val = if row.error.is_none() { 1 } else { 0 };
-        out.push_str(&format!("netrack_test_success{{{labels}}} {val}\n"));
-    }
-
     out
 }
 
@@ -150,11 +164,28 @@ pub async fn metrics_handler(State(state): State<AppState>, req: Request) -> Res
         let session_valid = auth_ctx.is_some_and(|c| c.authenticated);
 
         let basic_valid = if !session_valid {
-            req.headers()
+            let creds = req
+                .headers()
                 .get(header::AUTHORIZATION)
                 .and_then(|h| h.to_str().ok())
-                .and_then(extract_basic_auth)
-                .is_some_and(|(_user, pass)| verify_password(&pass, &cfg.password_hash))
+                .and_then(extract_basic_auth);
+            match creds {
+                Some((_user, pass)) => {
+                    let conn = req
+                        .extensions()
+                        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                        .map(|c| c.0);
+                    let ip = client_ip(&state, req.headers(), conn);
+                    match check_password(&state, ip, pass, cfg.password_hash.clone()).await {
+                        PasswordCheck::Ok => true,
+                        PasswordCheck::Bad => false,
+                        PasswordCheck::Locked(w) => {
+                            return ApiError::too_many_attempts(w).into_response();
+                        }
+                    }
+                }
+                None => false,
+            }
         } else {
             false
         };
@@ -174,7 +205,13 @@ pub async fn metrics_handler(State(state): State<AppState>, req: Request) -> Res
         Err(e) => return ApiError::from(e).into_response(),
     };
 
-    let body = format_metrics(latest.as_ref());
+    let since_ms = (Utc::now() - Duration::hours(24)).timestamp_millis();
+    let window = match stats::window(&state.db, since_ms).await {
+        Ok(w) => w,
+        Err(e) => return ApiError::from(e).into_response(),
+    };
+
+    let body = format_metrics(latest.as_ref(), &window);
     Response::builder()
         .status(StatusCode::OK)
         .header(

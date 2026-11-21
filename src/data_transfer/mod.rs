@@ -398,22 +398,30 @@ pub fn parse_csv_records(content: &str) -> Result<Vec<ImportRecord>, String> {
     Ok(result)
 }
 
-pub async fn insert_records(db: &Db, records: Vec<ImportRecord>) -> anyhow::Result<usize> {
+pub struct ImportOutcome {
+    pub imported: usize,
+    pub skipped: usize,
+}
+
+pub async fn insert_records(db: &Db, records: Vec<ImportRecord>) -> anyhow::Result<ImportOutcome> {
     let tz = db.tz();
-    let count = records.len();
     db.call(move |conn| {
         let tx = conn.transaction()?;
+        let (mut imported, mut skipped) = (0, 0);
         {
             let mut stmt = tx.prepare(
                 "INSERT INTO speedtests (
                     created_at, local_hour, local_weekday, kind, provider,
                     server_id, server_name, server_host, result_id,
                     ping, jitter, download, upload, duration, error
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                ) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM speedtests WHERE created_at = ?1 AND provider = ?5
+                )",
             )?;
             for r in records {
                 let (local_hour, local_weekday) = local_fields(tz, r.created_at);
-                stmt.execute(rusqlite::params![
+                let n = stmt.execute(rusqlite::params![
                     r.created_at,
                     local_hour,
                     local_weekday,
@@ -430,10 +438,12 @@ pub async fn insert_records(db: &Db, records: Vec<ImportRecord>) -> anyhow::Resu
                     r.duration,
                     r.error,
                 ])?;
+                imported += n;
+                skipped += 1 - n;
             }
         }
         tx.commit()?;
-        Ok(count)
+        Ok(ImportOutcome { imported, skipped })
     })
     .await
 }

@@ -109,6 +109,34 @@ async fn successful_run_persists_and_emits_finished() {
 }
 
 #[tokio::test]
+async fn slow_test_emits_degraded_right_after_finished() {
+    let p = FakeProvider::new(vec![Ok(m(12.0, 10.0, 80.0))]);
+    let (db, runner) = setup(&p).await;
+    config::set(&db, "expected_mode", "manual").await.unwrap();
+    config::set(&db, "expected_download", "100").await.unwrap();
+    let mut rx = runner.subscribe();
+    let id = runner.run(TestKind::Custom).await.unwrap();
+    assert!(matches!(rx.recv().await.unwrap(), RunEvent::Started { .. }));
+    assert!(matches!(
+        rx.recv().await.unwrap(),
+        RunEvent::Finished { .. }
+    ));
+    match rx.recv().await.unwrap() {
+        RunEvent::Degraded {
+            id: eid,
+            expected_download,
+            threshold_pct,
+            ..
+        } => {
+            assert_eq!(eid, id);
+            assert_eq!(threshold_pct, 70);
+            assert_eq!(expected_download, 100.0);
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn runner_records_failure_after_one_retry() {
     let p = FakeProvider::new(vec![err(), err()]);
     let (db, runner) = setup(&p).await;

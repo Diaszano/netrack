@@ -48,6 +48,7 @@ struct Ctx {
     app: Router,
     runner: Runner,
     db: Db,
+    _bk: tempfile::TempDir,
 }
 
 async fn setup(delay: Duration) -> Ctx {
@@ -55,12 +56,14 @@ async fn setup(delay: Duration) -> Ctx {
     let factory: ProviderFactory = Arc::new(move |_| Box::new(FakeProvider { delay }));
     let runner = Runner::new(db.clone(), factory);
     let (tx, rx) = watch::channel(());
-    let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx);
+    let bk = tempfile::tempdir().unwrap();
+    let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx, bk.path().to_path_buf());
     let state = AppState::new(db.clone(), runner.clone(), tx, Arc::new(scheduler));
     Ctx {
         app: router(state),
         runner,
         db,
+        _bk: bk,
     }
 }
 
@@ -462,7 +465,8 @@ async fn open_event_stream_ends_on_shutdown() {
     });
     let runner = Runner::new(db.clone(), factory);
     let (tx, rx) = watch::channel(());
-    let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx);
+    let bk = tempfile::tempdir().unwrap();
+    let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx, bk.path().to_path_buf());
     let state = AppState::new(db, runner, tx, Arc::new(scheduler));
     let app = router(state.clone());
     let res = app

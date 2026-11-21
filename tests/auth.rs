@@ -42,18 +42,28 @@ impl SpeedProvider for DummyProvider {
 struct TestApp {
     app: Router,
     db: Db,
+    _bk: tempfile::TempDir,
 }
 
 impl TestApp {
     async fn new() -> Self {
+        Self::with_trust_proxy(false).await
+    }
+
+    async fn with_trust_proxy(trust: bool) -> Self {
+        Self::build(|s| s.with_trust_proxy(trust)).await
+    }
+
+    async fn build(f: impl FnOnce(AppState) -> AppState) -> Self {
         let db = Db::open_in_memory(chrono_tz::Tz::UTC).await.unwrap();
         let factory: ProviderFactory = Arc::new(|_| Box::new(DummyProvider));
         let runner = Runner::new(db.clone(), factory);
         let (tx, rx) = watch::channel(());
-        let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx);
-        let state = AppState::new(db.clone(), runner, tx, Arc::new(scheduler));
+        let bk = tempfile::tempdir().unwrap();
+        let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx, bk.path().to_path_buf());
+        let state = f(AppState::new(db.clone(), runner, tx, Arc::new(scheduler)));
         let app = router(state);
-        Self { app, db }
+        Self { app, db, _bk: bk }
     }
 
     async fn request(
@@ -488,4 +498,391 @@ async fn expired_session_token_is_rejected() {
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(json, json!({ "error": "unauthorized" }));
+}
+
+#[tokio::test]
+async fn public_mode_hides_secrets_from_anonymous() {
+    let app = TestApp::new().await;
+    let (status, _, _) = app
+        .request(
+            Method::POST,
+            "/api/auth/password",
+            Some(json!({ "password": "pw", "mode": "public" })),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    for uri in [
+        "/api/integrations",
+        "/api/nodes",
+        "/api/data/export",
+        "/api/data/stats",
+    ] {
+        let (status, _, json) = app.request(Method::GET, uri, None, None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
+        assert_eq!(json, json!({ "error": "unauthorized" }), "{uri}");
+    }
+    for uri in ["/api/speedtests", "/api/config"] {
+        let (status, _, _) = app.request(Method::GET, uri, None, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+    }
+
+    let (status, headers, _) = app
+        .request(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "password": "pw" })),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let cookie = headers
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let (status, _, _) = app
+        .request(Method::GET, "/api/integrations", None, Some(&cookie), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+async fn protect(app: &TestApp) {
+    app.request(
+        Method::POST,
+        "/api/auth/password",
+        Some(json!({ "password": "password123", "mode": "protected" })),
+        None,
+        None,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn wrong_password_login_is_delayed() {
+    let app = TestApp::new().await;
+    protect(&app).await;
+    let start = std::time::Instant::now();
+    let (status, _, _) = app
+        .request(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "password": "wrong" })),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(start.elapsed() >= std::time::Duration::from_millis(450));
+}
+
+#[tokio::test]
+async fn session_token_does_not_hit_argon() {
+    let app = TestApp::new().await;
+    protect(&app).await;
+    let (_, _, json) = app
+        .request(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "password": "password123" })),
+            None,
+            None,
+        )
+        .await;
+    let cookie = format!("netrack_session={}", json["token"].as_str().unwrap());
+    let start = std::time::Instant::now();
+    for _ in 0..20 {
+        let (status, _, _) = app
+            .request(Method::GET, "/api/speedtests", None, Some(&cookie), None)
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn expired_cookie_is_rejected_fast() {
+    let app = TestApp::new().await;
+    protect(&app).await;
+    let start = std::time::Instant::now();
+    let (status, _, _) = app
+        .request(
+            Method::GET,
+            "/api/speedtests",
+            None,
+            Some("netrack_session=deadbeef"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(start.elapsed() < std::time::Duration::from_millis(200));
+}
+
+#[tokio::test]
+async fn bearer_session_token_is_fast() {
+    let app = TestApp::new().await;
+    protect(&app).await;
+    let (_, _, json) = app
+        .request(
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "password": "password123" })),
+            None,
+            None,
+        )
+        .await;
+    let auth = format!("Bearer {}", json["token"].as_str().unwrap());
+    let start = std::time::Instant::now();
+    for _ in 0..20 {
+        let (status, _, _) = app
+            .request(Method::GET, "/api/speedtests", None, None, Some(&auth))
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn cookie_and_bearer_password_from_old_primary_is_accepted() {
+    let app = TestApp::new().await;
+    protect(&app).await;
+    let (status, _, _) = app
+        .request(
+            Method::GET,
+            "/api/speedtests",
+            None,
+            Some("netrack_session=password123"),
+            Some("Bearer password123"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn delete_expired_sessions_removes_only_expired() {
+    let app = TestApp::new().await;
+    let now = chrono::Utc::now().timestamp();
+    app.db
+        .call(move |conn| {
+            conn.execute(
+                "INSERT INTO sessions (token, created_at, expires_at) VALUES ('old', ?1, ?2), ('new', ?1, ?3)",
+                rusqlite::params![now - 10, now - 1, now + 3600],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let n = netrack::auth::delete_expired_sessions(&app.db, now)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    let left: i64 = app
+        .db
+        .call(|conn| Ok(conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?))
+        .await
+        .unwrap();
+    assert_eq!(left, 1);
+}
+
+async fn set_protected(app: &TestApp) {
+    let (status, _, _) = app
+        .request(
+            Method::POST,
+            "/api/auth/password",
+            Some(json!({ "password": "mypassword123", "mode": "protected" })),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+async fn login_from(app: &TestApp, password: &str, xff: Option<&str>) -> (StatusCode, bool) {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/auth/login")
+        .header("content-type", "application/json");
+    if let Some(x) = xff {
+        req = req.header("x-forwarded-for", x);
+    }
+    let res = app
+        .app
+        .clone()
+        .oneshot(
+            req.body(Body::from(json!({ "password": password }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    (res.status(), res.headers().contains_key("retry-after"))
+}
+
+#[tokio::test]
+async fn login_locks_out_after_five_failures() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    for _ in 0..5 {
+        assert_eq!(
+            login_from(&app, "wrong", None).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    // Even the right password is refused while locked out.
+    let (status, retry_after) = login_from(&app, "mypassword123", None).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(retry_after);
+}
+
+#[tokio::test]
+async fn spoofed_forwarded_for_does_not_bypass_lockout_without_trust_proxy() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    for i in 0..5 {
+        let xff = format!("10.0.0.{i}");
+        assert_eq!(
+            login_from(&app, "wrong", Some(&xff)).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let (status, _) = login_from(&app, "mypassword123", Some("10.9.9.9")).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn forwarded_for_separates_clients_with_trust_proxy() {
+    let app = TestApp::with_trust_proxy(true).await;
+    set_protected(&app).await;
+    for _ in 0..5 {
+        login_from(&app, "wrong", Some("9.9.9.9, 10.0.0.1")).await;
+    }
+    // The client-supplied first value is ignored; the proxy-appended last one counts.
+    assert_eq!(
+        login_from(&app, "mypassword123", Some("1.1.1.1, 10.0.0.1"))
+            .await
+            .0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        login_from(&app, "mypassword123", Some("9.9.9.9, 10.0.0.2"))
+            .await
+            .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn lockout_is_shared_with_bearer_password_checks() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    for _ in 0..5 {
+        let (status, _, _) = app
+            .request(
+                Method::GET,
+                "/api/speedtests",
+                None,
+                None,
+                Some("Bearer wrong"),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(
+        login_from(&app, "mypassword123", None).await.0,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+#[tokio::test]
+async fn concurrent_wrong_logins_cannot_exceed_the_limit() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    let results = futures::future::join_all((0..10).map(|_| login_from(&app, "wrong", None))).await;
+    let locked = results
+        .iter()
+        .filter(|r| r.0 == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!(locked, 5);
+}
+
+#[tokio::test]
+async fn cached_bearer_password_survives_parallel_requests() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    let get = || {
+        app.request(
+            Method::GET,
+            "/api/speedtests",
+            None,
+            None,
+            Some("Bearer mypassword123"),
+        )
+    };
+    assert_eq!(get().await.0, StatusCode::OK);
+    let results = futures::future::join_all((0..10).map(|_| get())).await;
+    assert!(results.iter().all(|r| r.0 == StatusCode::OK));
+}
+
+#[tokio::test]
+async fn old_bearer_password_is_rejected_after_change() {
+    let app = TestApp::new().await;
+    set_protected(&app).await;
+    let (status, _, _) = app
+        .request(
+            Method::GET,
+            "/api/speedtests",
+            None,
+            None,
+            Some("Bearer mypassword123"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = app
+        .request(
+            Method::POST,
+            "/api/auth/password",
+            Some(json!({ "password": "anotherpassword456", "mode": "protected" })),
+            None,
+            Some("Bearer mypassword123"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = app
+        .request(
+            Method::GET,
+            "/api/speedtests",
+            None,
+            None,
+            Some("Bearer mypassword123"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn secure_cookie_flag() {
+    for secure in [true, false] {
+        let app = TestApp::build(|s| s.with_secure_cookie(secure)).await;
+        for (method, uri) in [
+            (Method::POST, "/api/auth/login"),
+            (Method::POST, "/api/auth/logout"),
+        ] {
+            let (_, headers, _) = app
+                .request(method, uri, Some(json!({ "password": "" })), None, None)
+                .await;
+            let cookie = headers.get("set-cookie").unwrap().to_str().unwrap();
+            if secure {
+                assert!(cookie.ends_with("; Secure"), "{uri}: {cookie}");
+            } else {
+                assert!(!cookie.contains("Secure"), "{uri}: {cookie}");
+            }
+        }
+    }
 }

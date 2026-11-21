@@ -8,6 +8,9 @@ use crate::api::ApiError;
 
 include!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
 
+// style-src needs 'unsafe-inline' while views still use style="" attributes.
+const CSP: &str = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'";
+
 /// Look up an asset by its absolute URL path (e.g. `/styles.css`).
 pub fn get_asset(path: &str) -> Option<(&'static str, &'static [u8])> {
     ASSETS
@@ -47,6 +50,9 @@ pub(crate) async fn serve(uri: Uri, method: Method) -> Response {
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, content_type)
             .header(header::CACHE_CONTROL, cache_control)
+            .header(header::CONTENT_SECURITY_POLICY, CSP)
+            .header(header::X_FRAME_OPTIONS, "DENY")
+            .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
             .body(body)
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
     }
@@ -69,6 +75,9 @@ pub(crate) async fn serve(uri: Uri, method: Method) -> Response {
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
             .header(header::CACHE_CONTROL, "no-cache")
+            .header(header::CONTENT_SECURITY_POLICY, CSP)
+            .header(header::X_FRAME_OPTIONS, "DENY")
+            .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
             .body(body)
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
     }

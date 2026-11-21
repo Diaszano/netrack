@@ -6,7 +6,7 @@ import { createTranslator } from "../i18n.js";
 import { createApiClient, CONFIG_KEY_MAP, serializeConfigValue } from "../api.js";
 import { createInitialState } from "../state.js";
 import { renderAuthModal, renderAuthStatusBadge } from "../views/auth.js";
-import { renderIntegrations, SUPPORTED_CHANNELS, SUPPORTED_EVENTS, CHANNEL_CONFIG_FIELDS } from "../views/integrations.js";
+import { renderIntegrations, extractIntegrationPayload, renderChannelConfigFields, SUPPORTED_CHANNELS, SUPPORTED_EVENTS, CHANNEL_CONFIG_FIELDS } from "../views/integrations.js";
 import { renderNodes } from "../views/nodes.js";
 import { renderServers } from "../views/servers.js";
 import { renderSettings } from "../views/settings.js";
@@ -220,7 +220,7 @@ test("integrations_view_renders_8_channels_6_events_and_crud_controls", () => {
     assert.ok(SUPPORTED_CHANNELS.includes(ch), `Must support channel ${ch}`);
     assert.ok(Array.isArray(CHANNEL_CONFIG_FIELDS[ch]), `Must define config fields for ${ch}`);
   }
-  assert.equal(SUPPORTED_EVENTS.length, 6);
+  assert.equal(SUPPORTED_EVENTS.length, 7);
 
   const state = createInitialState();
   state.integrations = {
@@ -451,4 +451,22 @@ test("system_banners_render_preview_mode_and_update_available", () => {
   assert.ok(bannersHtml.includes("Modo de demonstração ativo"), "Must render preview_message banner");
   assert.ok(bannersHtml.includes("0.2.0"), "Must render update_available notification with latest_version");
   assert.ok(bannersHtml.includes("Custom error alert"), "Must also render active state.banner alert");
+});
+
+test("extractIntegrationPayload keeps mask when secret field untouched", () => {
+  const html = renderChannelConfigFields("telegram", { bot_token: "***", chat_id: "1" });
+  assert.match(html, /name="masked\.bot_token"/);
+  assert.match(html, /placeholder="••••"/);
+  assert.doesNotMatch(html, /value="\*\*\*"/);
+
+  const fd = new FormData();
+  fd.set("name", "TG");
+  fd.set("channel_type", "telegram");
+  fd.set("config.bot_token", "");
+  fd.set("masked.bot_token", "1");
+  fd.set("config.chat_id", "2");
+  assert.equal(extractIntegrationPayload(fd).config.bot_token, "***");
+
+  fd.set("config.bot_token", "newtoken");
+  assert.equal(extractIntegrationPayload(fd).config.bot_token, "newtoken");
 });

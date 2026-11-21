@@ -133,6 +133,11 @@ export function renderSettings(state, { t = (k) => k, locales = [] } = {}) {
     <input id="setting-retention" type="number" name="retentionDays" min="1" max="10000" value="${escapeHtml(retentionVal)}" class="form-control" style="max-width: 200px;">
     <span class="form-help">${escapeHtml(t("settings.retentionHelp") || "Testes com mais tempo que este período serão excluídos automaticamente")}</span>
   </div>
+  <div class="form-group">
+    <label class="form-label" for="setting-backup-keep">${escapeHtml(t("settings.backupKeep") || "Backups diários mantidos")}</label>
+    <input id="setting-backup-keep" type="number" name="backupKeep" min="0" max="30" value="${escapeHtml(config.backupKeep ?? "")}" class="form-control" style="max-width: 200px;">
+    <span class="form-help">${escapeHtml(t("settings.backupKeepHelp") || "0 desliga o backup diário do banco")}</span>
+  </div>
 </div>`;
 
   // 2. Plano / Valores esperados card (expectedMode, expectedDownload, expectedUpload, expectedPing)
@@ -140,6 +145,7 @@ export function renderSettings(state, { t = (k) => k, locales = [] } = {}) {
   const isAuto = mode === "auto";
   const dlVal = config.expectedDownload != null ? config.expectedDownload : "";
   const ulVal = config.expectedUpload != null ? config.expectedUpload : "";
+  const pctVal = config.degradedThresholdPct != null ? config.degradedThresholdPct : "";
   const pingVal = config.expectedPing != null ? config.expectedPing : "";
 
   const expectedCardHtml = `<div class="card">
@@ -165,6 +171,10 @@ export function renderSettings(state, { t = (k) => k, locales = [] } = {}) {
     <div class="form-group">
       <label class="form-label" for="setting-expected-ping">${escapeHtml(t("settings.expectedPing") || "Ping esperado (ms)")}</label>
       <input id="setting-expected-ping" type="number" step="any" min="0" name="expectedPing" value="${escapeHtml(pingVal)}" class="form-control"${isAuto ? " readonly" : ""}>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="setting-degraded-pct">${escapeHtml(t("settings.degradedThresholdPct") || "Limite de lentidão (% do esperado)")}</label>
+      <input id="setting-degraded-pct" type="number" step="1" min="1" max="100" name="degradedThresholdPct" value="${escapeHtml(pctVal)}" class="form-control">
     </div>
   </div>
 </div>`;

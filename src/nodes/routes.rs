@@ -160,27 +160,18 @@ async fn node_status(
         None => return Err(ApiError::new(StatusCode::NOT_FOUND, "node not found")),
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
     let base_url = node.url.trim_end_matches('/');
     let status_url = format!("{base_url}/api/system/status");
     let speedtests_url = format!("{base_url}/api/speedtests?limit=1");
 
-    let mut status_req = client.get(&status_url);
-    let mut speedtests_req = client.get(&speedtests_url);
+    let mut status_req = s.http.get(&status_url).timeout(Duration::from_secs(5));
+    let mut speedtests_req = s.http.get(&speedtests_url).timeout(Duration::from_secs(5));
 
     if let Some(pwd) = &node.password
         && !pwd.trim().is_empty()
     {
-        status_req = status_req
-            .header(header::AUTHORIZATION, format!("Bearer {pwd}"))
-            .header(header::COOKIE, format!("netrack_session={pwd}"));
-        speedtests_req = speedtests_req
-            .header(header::AUTHORIZATION, format!("Bearer {pwd}"))
-            .header(header::COOKIE, format!("netrack_session={pwd}"));
+        status_req = status_req.header(header::AUTHORIZATION, format!("Bearer {pwd}"));
+        speedtests_req = speedtests_req.header(header::AUTHORIZATION, format!("Bearer {pwd}"));
     }
 
     let status_resp = status_req.send().await;
@@ -272,14 +263,10 @@ async fn proxy_req(
         target_path
     };
 
-    let client = reqwest::Client::builder()
-        .build()
-        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
     let method = reqwest::Method::from_bytes(req.method().as_str().as_bytes())
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    let mut req_builder = client.request(method, &target_url);
+    let mut req_builder = state.http.request(method, &target_url);
 
     let orig_cookie = req
         .headers()
@@ -312,20 +299,8 @@ async fn proxy_req(
         && !pwd.trim().is_empty()
     {
         req_builder = req_builder.header(header::AUTHORIZATION, format!("Bearer {pwd}"));
-        let new_cookie = if let Some(cookie_str) = orig_cookie {
-            let mut parts: Vec<&str> = cookie_str
-                .split(';')
-                .map(|s| s.trim())
-                .filter(|s| !s.starts_with("netrack_session="))
-                .collect();
-            let netrack_cookie = format!("netrack_session={pwd}");
-            parts.push(&netrack_cookie);
-            parts.join("; ")
-        } else {
-            format!("netrack_session={pwd}")
-        };
-        req_builder = req_builder.header(header::COOKIE, new_cookie);
-    } else if let Some(cookie_str) = orig_cookie {
+    }
+    if let Some(cookie_str) = orig_cookie {
         let parts: Vec<&str> = cookie_str
             .split(';')
             .map(|s| s.trim())
@@ -363,6 +338,7 @@ async fn proxy_req(
                 | "trailer"
                 | "transfer-encoding"
                 | "upgrade"
+                | "set-cookie"
         ) {
             continue;
         }

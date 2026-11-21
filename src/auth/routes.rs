@@ -1,4 +1,6 @@
-use axum::extract::{Extension, State};
+use std::net::SocketAddr;
+
+use axum::extract::{ConnectInfo, Extension, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -6,8 +8,8 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AuthContext, SESSION_COOKIE_NAME, SESSION_DURATION_SECS, create_session, delete_all_sessions,
-    delete_session, hash_password, verify_password,
+    AuthContext, PasswordCheck, SESSION_COOKIE_NAME, SESSION_DURATION_SECS, check_password,
+    client_ip, create_session, delete_all_sessions, delete_session, hash_password,
 };
 use crate::api::{ApiError, ApiJson, ApiResult, AppState};
 use crate::db::config::{self, PasswordMode};
@@ -52,19 +54,24 @@ pub struct LoginResponse {
 
 async fn login(
     State(s): State<AppState>,
+    headers: HeaderMap,
+    conn: Option<Extension<ConnectInfo<SocketAddr>>>,
     ApiJson(body): ApiJson<LoginRequest>,
 ) -> ApiResult<impl IntoResponse> {
     let cfg = config::load(&s.db).await?;
-    if cfg.password_mode != PasswordMode::None
-        && !verify_password(&body.password, &cfg.password_hash)
-    {
-        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "invalid password"));
+    if cfg.password_mode != PasswordMode::None {
+        let ip = client_ip(&s, &headers, conn.map(|c| c.0.0));
+        match check_password(&s, ip, body.password, cfg.password_hash).await {
+            PasswordCheck::Ok => {}
+            PasswordCheck::Bad => {
+                return Err(ApiError::new(StatusCode::UNAUTHORIZED, "invalid password"));
+            }
+            PasswordCheck::Locked(w) => return Err(ApiError::too_many_attempts(w)),
+        }
     }
 
     let (token, expires_at) = create_session(&s.db).await?;
-    let cookie_val = format!(
-        "{SESSION_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_DURATION_SECS}"
-    );
+    let cookie_val = session_cookie(&token, SESSION_DURATION_SECS, s.secure_cookie);
 
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -75,6 +82,13 @@ async fn login(
     Ok((headers, Json(LoginResponse { token, expires_at })))
 }
 
+fn session_cookie(token: &str, max_age: i64, secure: bool) -> String {
+    let flag = if secure { "; Secure" } else { "" };
+    format!(
+        "{SESSION_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{flag}"
+    )
+}
+
 async fn logout(
     State(s): State<AppState>,
     Extension(auth): Extension<AuthContext>,
@@ -83,7 +97,7 @@ async fn logout(
         delete_session(&s.db, &token).await?;
     }
 
-    let cookie_val = format!("{SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+    let cookie_val = session_cookie("", 0, s.secure_cookie);
     let mut headers = HeaderMap::new();
     headers.insert(
         header::SET_COOKIE,
@@ -106,6 +120,8 @@ pub struct PasswordRequest {
 
 async fn set_password(
     State(s): State<AppState>,
+    headers: HeaderMap,
+    conn: Option<Extension<ConnectInfo<SocketAddr>>>,
     Extension(auth): Extension<AuthContext>,
     ApiJson(body): ApiJson<PasswordRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
@@ -113,11 +129,17 @@ async fn set_password(
 
     if cfg.password_mode != PasswordMode::None {
         let is_authed = auth.authenticated
-            || body
-                .current_password
-                .as_deref()
-                .map(|p| verify_password(p, &cfg.password_hash))
-                .unwrap_or(false);
+            || match body.current_password.clone() {
+                Some(p) => {
+                    let ip = client_ip(&s, &headers, conn.map(|c| c.0.0));
+                    match check_password(&s, ip, p, cfg.password_hash.clone()).await {
+                        PasswordCheck::Ok => true,
+                        PasswordCheck::Bad => false,
+                        PasswordCheck::Locked(w) => return Err(ApiError::too_many_attempts(w)),
+                    }
+                }
+                None => false,
+            };
 
         if !is_authed {
             return Err(ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized"));

@@ -1,3 +1,4 @@
+pub mod lockout;
 pub mod routes;
 
 use argon2::Argon2;
@@ -30,6 +31,76 @@ pub fn hash_password(password: &str) -> anyhow::Result<String> {
         .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))?
         .to_string();
     Ok(hash)
+}
+
+static ARGON_PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+const FAILED_AUTH_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Argon2 on the blocking pool, at most 2 at once; failures wait to slow brute force.
+pub async fn verify_password_async(password: String, hash: String) -> bool {
+    let Ok(permit) = ARGON_PERMITS.acquire().await else {
+        return false;
+    };
+    // Permit moves into the closure: held exactly while Argon2 runs, even if the caller is dropped.
+    let ok = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        verify_password(&password, &hash)
+    })
+    .await
+    .unwrap_or(false);
+    if !ok {
+        tokio::time::sleep(FAILED_AUTH_DELAY).await;
+    }
+    ok
+}
+
+pub enum PasswordCheck {
+    Ok,
+    Bad,
+    Locked(std::time::Duration),
+}
+
+/// Client IP for lockout. `X-Forwarded-For` is client-controlled, so it only counts behind a
+/// trusted proxy, and then only the last value (the one the proxy appended).
+pub fn client_ip(
+    s: &AppState,
+    headers: &axum::http::HeaderMap,
+    conn: Option<std::net::SocketAddr>,
+) -> std::net::IpAddr {
+    let forwarded = s
+        .trust_proxy
+        .then(|| headers.get("x-forwarded-for")?.to_str().ok())
+        .flatten()
+        .and_then(|v| v.rsplit(',').next()?.trim().parse().ok());
+    forwarded
+        .or(conn.map(|c| c.ip()))
+        .unwrap_or(std::net::IpAddr::from([0, 0, 0, 0]))
+}
+
+/// Every Argon2 password check goes through here so one per-IP limit covers all entry points.
+pub async fn check_password(
+    s: &AppState,
+    ip: std::net::IpAddr,
+    password: String,
+    hash: String,
+) -> PasswordCheck {
+    if let Err(wait) = s.login_lockout.try_begin(ip, std::time::Instant::now()) {
+        return PasswordCheck::Locked(wait);
+    }
+    if verify_password_async(password, hash).await {
+        s.login_lockout.succeed(ip);
+        PasswordCheck::Ok
+    } else {
+        PasswordCheck::Bad
+    }
+}
+
+fn ct_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0, |acc, (x, y)| acc | (x ^ y))
+            == 0
 }
 
 pub fn verify_password(password: &str, hash: &str) -> bool {
@@ -95,6 +166,18 @@ pub async fn delete_session(db: &Db, token: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub async fn delete_expired_sessions(db: &Db, now_secs: i64) -> anyhow::Result<usize> {
+    let n = db
+        .call(move |conn| {
+            Ok(conn.execute(
+                "DELETE FROM sessions WHERE expires_at <= ?1",
+                rusqlite::params![now_secs],
+            )?)
+        })
+        .await?;
+    Ok(n)
+}
+
 pub async fn delete_all_sessions(db: &Db) -> anyhow::Result<()> {
     db.call(|conn| {
         conn.execute("DELETE FROM sessions", [])?;
@@ -133,58 +216,85 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
         return next.run(req).await;
     }
 
-    let mut token = req
+    let cfg = match config::load(&state.db).await {
+        Ok(c) => c,
+        Err(e) => return ApiError::from(e).into_response(),
+    };
+
+    let cookie_token = req
         .headers()
         .get(header::COOKIE)
         .and_then(|h| h.to_str().ok())
         .and_then(extract_token_from_cookie);
+    let bearer_token = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(extract_token_from_bearer);
 
-    if token.is_none() {
-        token = req
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok())
-            .and_then(extract_token_from_bearer);
-    }
-
-    let mut authenticated = match &token {
+    let mut authenticated = match &cookie_token {
         Some(t) => validate_session(&state.db, t).await.unwrap_or(false),
         None => false,
     };
 
-    if !authenticated
-        && let Some(t) = &token
-        && let Ok(cfg) = config::load(&state.db).await
-        && cfg.password_mode != PasswordMode::None
-        && verify_password(t, &cfg.password_hash)
-    {
-        authenticated = true;
+    // Bearer is checked even when a cookie is present (older primaries send both).
+    // Only a Bearer token may be the raw password; a stale cookie must not cost Argon2.
+    if !authenticated && let Some(t) = &bearer_token {
+        authenticated = validate_session(&state.db, t).await.unwrap_or(false);
+        if !authenticated && cfg.password_mode != PasswordMode::None {
+            // A new password means a new hash, so a stale entry never matches.
+            let cached = state
+                .bearer_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .is_some_and(|(h, p)| *h == cfg.password_hash && ct_eq(p, t));
+            if cached {
+                authenticated = true;
+            } else {
+                let ip = client_ip(
+                    &state,
+                    req.headers(),
+                    req.extensions()
+                        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                        .map(|c| c.0),
+                );
+                match check_password(&state, ip, t.clone(), cfg.password_hash.clone()).await {
+                    PasswordCheck::Ok => {
+                        authenticated = true;
+                        *state.bearer_cache.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some((cfg.password_hash.clone(), t.clone()));
+                    }
+                    PasswordCheck::Bad => {}
+                    PasswordCheck::Locked(w) => {
+                        return ApiError::too_many_attempts(w).into_response();
+                    }
+                }
+            }
+        }
     }
+    let token = cookie_token.or(bearer_token);
 
     req.extensions_mut().insert(AuthContext {
         authenticated,
         token,
     });
 
-    let path = req.uri().path();
+    let path = req.uri().path().to_owned();
     // Specific API route exemptions
     if path == "/api/auth/login" || path == "/api/auth/status" || path == "/api/prometheus/metrics"
     {
         return next.run(req).await;
     }
 
-    let cfg = match config::load(&state.db).await {
-        Ok(c) => c,
-        Err(e) => return ApiError::from(e).into_response(),
-    };
     match cfg.password_mode {
         PasswordMode::None => next.run(req).await,
         PasswordMode::Public => {
-            if matches!(
+            let read_only = matches!(
                 req.method(),
                 &Method::GET | &Method::HEAD | &Method::OPTIONS
-            ) || authenticated
-            {
+            );
+            if (read_only && !requires_auth_in_public(&path)) || authenticated {
                 next.run(req).await
             } else {
                 ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized").into_response()
@@ -198,4 +308,11 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
             }
         }
     }
+}
+
+/// Secrets-bearing routes stay behind login even for GETs in public mode.
+fn requires_auth_in_public(path: &str) -> bool {
+    ["/api/integrations", "/api/nodes", "/api/data"]
+        .iter()
+        .any(|p| path.starts_with(p))
 }

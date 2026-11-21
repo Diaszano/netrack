@@ -52,6 +52,12 @@ pub async fn send(
             }
             msg
         }
+        IntegrationEvent::SpeedtestDegraded { .. } => {
+            format!(
+                "🐌 *Netrack: Speedtest degraded*\n\n{}",
+                event.degraded_summary().unwrap_or_default()
+            )
+        }
         IntegrationEvent::SpeedtestFailed { error, .. } => {
             format!("❌ *Netrack: Speedtest failed*\n\nError: `{error}`")
         }

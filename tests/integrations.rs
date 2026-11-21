@@ -119,6 +119,7 @@ struct TestApp {
     db: Db,
     runner: Runner,
     reload_tx: watch::Sender<()>,
+    _bk: tempfile::TempDir,
 }
 
 impl TestApp {
@@ -131,7 +132,13 @@ impl TestApp {
         };
         let runner = Runner::new(db.clone(), factory);
         let (reload_tx, reload_rx) = watch::channel(());
-        let scheduler = Scheduler::spawn(db.clone(), runner.clone(), reload_rx);
+        let bk = tempfile::tempdir().unwrap();
+        let scheduler = Scheduler::spawn(
+            db.clone(),
+            runner.clone(),
+            reload_rx,
+            bk.path().to_path_buf(),
+        );
         let state = AppState::new(
             db.clone(),
             runner.clone(),
@@ -144,6 +151,7 @@ impl TestApp {
             db,
             runner,
             reload_tx,
+            _bk: bk,
         }
     }
 
@@ -497,6 +505,47 @@ async fn dispatcher_handles_all_channel_types_on_runner_success() {
 }
 
 #[tokio::test]
+async fn dispatcher_delivers_degraded_event_to_webhook() {
+    let mock = MockServer::start().await;
+    let app = TestApp::new(false).await; // download 250
+    netrack::db::config::set(&app.db, "expected_download", "1000")
+        .await
+        .unwrap();
+    let dispatcher = IntegrationDispatcher::new(
+        app.db.clone(),
+        app.runner.subscribe(),
+        app.reload_tx.subscribe(),
+        reqwest::Client::new(),
+    );
+    dispatcher.spawn();
+
+    let (status, _) = app
+        .request(
+            Method::POST,
+            "/api/integrations",
+            Some(json!({
+                "name": "Degraded",
+                "channel_type": "webhook",
+                "config": {"url": format!("{}/webhook", mock.base_url())},
+                "events": ["speedtest.degraded"],
+                "enabled": true
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    app.runner.run(TestKind::Custom).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let recorded = mock.recorded();
+    assert_eq!(recorded.len(), 1);
+    let body: Value = serde_json::from_str(&recorded[0].body).unwrap();
+    assert_eq!(body["event"], "speedtest.degraded");
+    assert_eq!(body["data"]["expected"]["download"], 1000.0);
+    assert_eq!(body["data"]["thresholdPct"], 70);
+}
+
+#[tokio::test]
 async fn dispatcher_handles_failure_events_and_resilient_to_errors() {
     let mock = MockServer::start().await;
     let app = TestApp::new(true).await; // Failing provider
@@ -624,4 +673,100 @@ async fn test_ping_endpoint_reports_delivery_failure() {
         .await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(body["error"].as_str().unwrap().contains("delivery failed"));
+}
+
+#[tokio::test]
+async fn integration_secrets_are_masked_and_preserved() {
+    let mock = MockServer::start().await;
+    let app = TestApp::new(false).await;
+    let api = format!("{}/tg", mock.base_url());
+
+    let (status, created) = app
+        .request(
+            Method::POST,
+            "/api/integrations",
+            Some(json!({
+                "name": "TG", "channel_type": "telegram",
+                "config": {"bot_token": "abc", "chat_id": "1", "api_url": api},
+                "events": ["speedtest.finished"], "enabled": true
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["config"]["bot_token"], "***");
+    let id = created["id"].as_i64().unwrap();
+
+    let (_, list) = app.request(Method::GET, "/api/integrations", None).await;
+    assert_eq!(list[0]["config"]["bot_token"], "***");
+    assert_eq!(list[0]["config"]["chat_id"], "1");
+
+    let (status, updated) = app
+        .request(
+            Method::PUT,
+            &format!("/api/integrations/{id}"),
+            Some(json!({
+                "name": "TG", "channel_type": "telegram",
+                "config": {"bot_token": "***", "chat_id": "2", "api_url": api},
+                "events": ["speedtest.finished"], "enabled": true
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["config"]["bot_token"], "***");
+
+    let stored = netrack::integrations::get(&app.db, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.config["bot_token"], "abc");
+    assert_eq!(stored.config["chat_id"], "2");
+
+    let (status, body) = app
+        .request(Method::POST, &format!("/api/integrations/{id}/test"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["success"], true);
+    assert!(mock.recorded().iter().any(|r| r.uri.contains("botabc")));
+
+    // "***" on create has nothing to unmask and must never be stored.
+    let (status, body) = app
+        .request(
+            Method::POST,
+            "/api/integrations",
+            Some(json!({
+                "name": "Bad", "channel_type": "telegram",
+                "config": {"bot_token": "***", "chat_id": "1"},
+                "events": [], "enabled": true
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["error"].as_str().unwrap().contains("bot_token"));
+}
+
+#[tokio::test]
+async fn test_endpoint_error_does_not_leak_secret_url() {
+    let app = TestApp::new(false).await;
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let (_, created) = app
+        .request(
+            Method::POST,
+            "/api/integrations",
+            Some(json!({
+                "name": "TG", "channel_type": "telegram",
+                "config": {"bot_token": "SECRET-TOKEN", "chat_id": "1",
+                           "api_url": format!("http://127.0.0.1:{port}")},
+                "events": [], "enabled": true
+            })),
+        )
+        .await;
+    let id = created["id"].as_i64().unwrap();
+    let (status, body) = app
+        .request(Method::POST, &format!("/api/integrations/{id}/test"), None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(!body.to_string().contains("SECRET-TOKEN"), "{body}");
 }

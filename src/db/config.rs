@@ -50,6 +50,8 @@ pub struct AppConfig {
     pub expected_ping: f64,
     pub expected_download: f64,
     pub expected_upload: f64,
+    pub degraded_threshold_pct: u32,
+    pub backup_keep: u32,
     pub libre_server_id: Option<u32>,
     pub libre_url: Option<String>,
     pub interface: Option<String>,
@@ -80,6 +82,8 @@ pub const DEFAULTS: &[(&str, &str)] = &[
     ("expected_ping", "25"),
     ("expected_download", "100"),
     ("expected_upload", "50"),
+    ("degraded_threshold_pct", "70"),
+    ("backup_keep", "7"),
     ("libre_server_id", "auto"),
     ("libre_url", "none"),
     ("interface", "auto"),
@@ -136,6 +140,20 @@ fn parse_retention(key: &str, v: &str) -> Result<u32, ConfigError> {
     }
 }
 
+fn parse_pct(key: &str, v: &str) -> Result<u32, ConfigError> {
+    match v.parse::<u32>() {
+        Ok(n) if (1..=100).contains(&n) => Ok(n),
+        _ => Err(invalid(key, "expected an integer between 1 and 100")),
+    }
+}
+
+fn parse_backup_keep(key: &str, v: &str) -> Result<u32, ConfigError> {
+    match v.parse::<u32>() {
+        Ok(n) if n <= 30 => Ok(n),
+        _ => Err(invalid(key, "expected an integer between 0 and 30")),
+    }
+}
+
 fn parse_server_id(key: &str, v: &str) -> Result<Option<u32>, ConfigError> {
     if v == "auto" {
         return Ok(None);
@@ -186,6 +204,8 @@ fn validate(key: &str, v: &str) -> Result<(), ConfigError> {
         "expected_ping" | "expected_download" | "expected_upload" => {
             parse_number(key, v).map(|_| ())
         }
+        "degraded_threshold_pct" => parse_pct(key, v).map(|_| ()),
+        "backup_keep" => parse_backup_keep(key, v).map(|_| ()),
         "libre_server_id" => parse_server_id(key, v).map(|_| ()),
         "libre_url" => parse_url(key, v).map(|_| ()),
         "interface" => Ok(()),
@@ -230,6 +250,11 @@ pub async fn load(db: &Db) -> anyhow::Result<AppConfig> {
             expected_ping: parse_number("expected_ping", get("expected_ping"))?,
             expected_download: parse_number("expected_download", get("expected_download"))?,
             expected_upload: parse_number("expected_upload", get("expected_upload"))?,
+            degraded_threshold_pct: parse_pct(
+                "degraded_threshold_pct",
+                get("degraded_threshold_pct"),
+            )?,
+            backup_keep: parse_backup_keep("backup_keep", get("backup_keep"))?,
             libre_server_id: parse_server_id("libre_server_id", get("libre_server_id"))?,
             libre_url: parse_url("libre_url", get("libre_url"))?,
             interface: parse_interface(get("interface")),

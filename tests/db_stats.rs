@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
 use netrack::db::{
     Db,
-    stats::statistics,
+    stats::{statistics, window},
     tests_repo::{self, Metrics, NewSpeedtest, TestKind},
 };
 
@@ -252,4 +252,21 @@ async fn stats_on_100k_rows_under_200ms() {
     assert_eq!(s.total, 100_000);
     assert!(s.series.len() <= 300);
     assert!(elapsed.as_millis() < 200, "took {elapsed:?}");
+}
+
+#[tokio::test]
+async fn window_counts_and_averages_ok_only() {
+    let db = Db::open_in_memory(Tz::UTC).await.unwrap();
+    let now = Utc::now();
+    add(&db, dl(100.0), now - Duration::hours(2)).await;
+    add(&db, dl(200.0), now - Duration::hours(3)).await;
+    add(&db, Err("boom".into()), now - Duration::hours(1)).await;
+    add(&db, dl(900.0), now - Duration::hours(30)).await;
+    let w = window(&db, (now - Duration::hours(24)).timestamp_millis())
+        .await
+        .unwrap();
+    assert_eq!((w.ok, w.failed), (2, 1));
+    assert_eq!(w.avg_download, Some(150.0));
+    assert_eq!(w.avg_upload, Some(50.0));
+    assert_eq!(w.avg_ping, Some(10.0));
 }

@@ -12,6 +12,7 @@ import {
   renderSpeedChart,
   renderHeatmap,
 } from "../charts.js";
+import { renderServerCell, renderStatusBadge } from "./test-row.js";
 
 /**
  * Renders the Overview view.
@@ -143,7 +144,7 @@ export function renderOverview(state, { t = (k) => k } = {}) {
     tableRowsHtml = `<tr><td colspan="6" style="text-align: center; padding: 24px; color: var(--secondary);">${escapeHtml(emptyText)}</td></tr>`;
   } else {
     tableRowsHtml = recentRows.map((row) => {
-      const timeMs = row.createdAt ?? row.created_at ?? row.t;
+      const timeMs = row.createdAt ?? row.t;
       const timeStr = formatDateTime(timeMs, locale, tz);
 
       const isFailed = Boolean(row.error);
@@ -151,30 +152,8 @@ export function renderOverview(state, { t = (k) => k } = {}) {
       const ulStr = isFailed || row.upload == null ? "—" : `${formatMetric(row.upload, locale, "upload")} Mbps`;
       const pingStr = isFailed || row.ping == null ? "—" : `${formatMetric(row.ping, locale, "ping")} ms`;
 
-      // Provider & Server
-      const provider = row.provider ? escapeHtml(row.provider) : "—";
-      const serverName = (row.serverName ?? row.server_name) ? escapeHtml(row.serverName ?? row.server_name) : "";
-      const serverHost = (row.serverHost ?? row.server_host) ? escapeHtml(row.serverHost ?? row.server_host) : "";
-      let serverSub = "";
-      if (serverName && serverHost) {
-        serverSub = `${serverName} (${serverHost})`;
-      } else if (serverName) {
-        serverSub = serverName;
-      } else if (serverHost) {
-        serverSub = serverHost;
-      }
-      const serverCell = `<div>${provider}</div>${serverSub ? `<div class="card-subtitle">${serverSub}</div>` : ""}`;
-
-      // Status badge: ok in #3FD6C2, falha in #FF8FB1 with escaped error title
-      let badgeHtml = "";
-      if (isFailed) {
-        const errTitle = escapeHtml(row.error);
-        const failedLabel = escapeHtml(t("status.failed") || "falha");
-        badgeHtml = `<span class="badge badge-falha" style="color: #FF8FB1;" title="${errTitle}">${failedLabel}</span>`;
-      } else {
-        const okLabel = escapeHtml(t("status.ok") || "ok");
-        badgeHtml = `<span class="badge badge-ok" style="color: #3FD6C2;">${okLabel}</span>`;
-      }
+      const serverCell = renderServerCell(row);
+      const badgeHtml = renderStatusBadge(row, { t });
 
       return `<tr>
   <td class="num-col">${escapeHtml(timeStr)}</td>

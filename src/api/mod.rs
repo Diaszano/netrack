@@ -13,7 +13,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::extract::{FromRequest, FromRequestParts};
-use axum::http::StatusCode;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde_json::json;
@@ -45,6 +45,16 @@ pub struct AppState {
     pub preview_mode: bool,
     pub preview_message: Option<String>,
     pub version_checker: Arc<crate::version::VersionChecker>,
+    /// Shared outbound client. No total timeout: the node proxy carries SSE.
+    pub http: reqwest::Client,
+    pub login_lockout: Arc<crate::auth::lockout::Lockout>,
+    /// Honor `X-Forwarded-For` for the client IP (only safe behind a reverse proxy).
+    pub trust_proxy: bool,
+    /// Add `Secure` to the session cookie (needs HTTPS in front).
+    pub secure_cookie: bool,
+    /// (password hash, password) last verified via Bearer: a primary node resends the raw
+    /// password on every proxied request, which must not cost Argon2 or lockout attempts.
+    pub(crate) bearer_cache: Arc<Mutex<Option<(String, String)>>>,
 }
 
 impl AppState {
@@ -70,6 +80,14 @@ impl AppState {
             preview_mode: false,
             preview_message: None,
             version_checker: Arc::new(crate::version::VersionChecker::default()),
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .build()
+                .expect("static reqwest client configuration is valid"),
+            login_lockout: Arc::default(),
+            trust_proxy: false,
+            secure_cookie: false,
+            bearer_cache: Arc::default(),
         }
     }
 
@@ -90,6 +108,16 @@ impl AppState {
         } else {
             message
         };
+        self
+    }
+
+    pub fn with_trust_proxy(mut self, trust: bool) -> Self {
+        self.trust_proxy = trust;
+        self
+    }
+
+    pub fn with_secure_cookie(mut self, secure: bool) -> Self {
+        self.secure_cookie = secure;
         self
     }
 
@@ -168,11 +196,21 @@ pub fn router(state: AppState) -> Router {
 }
 
 /// An error rendered as `{ "error": "<message>" }`.
-pub(crate) struct ApiError(StatusCode, String);
+pub(crate) struct ApiError(StatusCode, String, Option<u64>);
 
 impl ApiError {
     pub(crate) fn new(status: StatusCode, message: impl Into<String>) -> ApiError {
-        ApiError(status, message.into())
+        ApiError(status, message.into(), None)
+    }
+
+    /// 429 with `Retry-After` (seconds, rounded up).
+    pub(crate) fn too_many_attempts(wait: std::time::Duration) -> ApiError {
+        let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
+        ApiError(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many attempts".into(),
+            Some(secs),
+        )
     }
 
     pub(crate) fn bad_request(message: impl Into<String>) -> ApiError {
@@ -189,7 +227,11 @@ impl From<anyhow::Error> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.0, Json(json!({ "error": self.1 }))).into_response()
+        let mut res = (self.0, Json(json!({ "error": self.1 }))).into_response();
+        if let Some(secs) = self.2 {
+            res.headers_mut().insert(header::RETRY_AFTER, secs.into());
+        }
+        res
     }
 }
 

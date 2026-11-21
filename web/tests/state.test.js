@@ -11,6 +11,7 @@ import {
   createInitialState,
   applyRunEvent,
   parseRoute,
+  shouldLoadNodes,
 } from "../state.js";
 import { setupI18n } from "../app.js";
 
@@ -313,4 +314,11 @@ test("setup_i18n_reads_netrack_locale_and_falls_back_to_legacy_key", async () =>
       delete globalThis.localStorage;
     }
   }
+});
+
+test("shouldLoadNodes skips the node list only for anonymous visitors in public mode", () => {
+  assert.equal(shouldLoadNodes({ mode: "public", authenticated: false }), false);
+  assert.equal(shouldLoadNodes({ mode: "public", authenticated: true }), true);
+  assert.equal(shouldLoadNodes({ mode: "none", authenticated: false }), true);
+  assert.equal(shouldLoadNodes({ mode: "protected", authenticated: true }), true);
 });

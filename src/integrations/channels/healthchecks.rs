@@ -18,6 +18,13 @@ pub async fn send(
         IntegrationEvent::SpeedtestStarted { kind, .. } => {
             (format!("{base}/start"), format!("Started {kind} speedtest"))
         }
+        IntegrationEvent::SpeedtestDegraded { .. } => (
+            format!("{base}/fail"),
+            format!(
+                "Speedtest degraded: {}",
+                event.degraded_summary().unwrap_or_default()
+            ),
+        ),
         IntegrationEvent::SpeedtestFailed { error, .. } => {
             (format!("{base}/fail"), format!("Speedtest failed: {error}"))
         }

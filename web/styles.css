@@ -33,6 +33,8 @@
   --accent-dl: #8B7CFF;
   --accent-ul: #3FD6C2;
   --accent-ping: #FF8FB1;
+  --ok: var(--accent-ul);
+  --fail: var(--accent-ping);
 
   /* Aliases & Component tokens */
   --sidebar-bg: var(--sidebar);
@@ -696,14 +698,14 @@ button, input, select, textarea {
 
 .badge-ok {
   background-color: rgba(63, 214, 194, 0.15);
-  color: var(--accent-ul);
+  color: var(--ok);
   border: 1px solid rgba(63, 214, 194, 0.3);
 }
 
 .badge-falha,
 .badge-error {
   background-color: rgba(255, 143, 177, 0.15);
-  color: var(--accent-ping);
+  color: var(--fail);
   border: 1px solid rgba(255, 143, 177, 0.3);
 }
 

@@ -1,8 +1,7 @@
 pub mod routes;
 
-use rusqlite::params;
-use serde::ser::SerializeMap;
-use serde::{Deserialize, Serialize, Serializer};
+use rusqlite::{OptionalExtension, Row, params};
+use serde::{Deserialize, Serialize};
 
 use crate::db::Db;
 use crate::db::tests_repo::SpeedtestRow;
@@ -16,7 +15,8 @@ pub struct Node {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct NodeResponse {
     pub id: i64,
     pub name: String,
@@ -40,24 +40,8 @@ impl From<Node> for NodeResponse {
     }
 }
 
-impl Serialize for NodeResponse {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(Some(7))?;
-        map.serialize_entry("id", &self.id)?;
-        map.serialize_entry("name", &self.name)?;
-        map.serialize_entry("url", &self.url)?;
-        map.serialize_entry("hasPassword", &self.has_password)?;
-        map.serialize_entry("has_password", &self.has_password)?;
-        map.serialize_entry("createdAt", &self.created_at)?;
-        map.serialize_entry("created_at", &self.created_at)?;
-        map.end()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct NodeStatusResponse {
     pub online: bool,
     pub version: Option<String>,
@@ -66,61 +50,37 @@ pub struct NodeStatusResponse {
     pub error: Option<String>,
 }
 
-impl Serialize for NodeStatusResponse {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(Some(5))?;
-        map.serialize_entry("online", &self.online)?;
-        map.serialize_entry("version", &self.version)?;
-        map.serialize_entry("latestTest", &self.latest_test)?;
-        map.serialize_entry("latest_test", &self.latest_test)?;
-        map.serialize_entry("error", &self.error)?;
-        map.end()
-    }
+const NODE_COLUMNS: &str = "id, name, url, password, created_at";
+
+fn map_node(row: &Row) -> rusqlite::Result<Node> {
+    Ok(Node {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        url: row.get(2)?,
+        password: row.get(3)?,
+        created_at: row.get(4)?,
+    })
 }
 
 pub async fn list(db: &Db) -> anyhow::Result<Vec<Node>> {
     db.call(|conn| {
         let mut stmt =
-            conn.prepare("SELECT id, name, url, password, created_at FROM nodes ORDER BY id ASC")?;
-        let rows = stmt.query_map([], |row| {
-            Ok(Node {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                url: row.get(2)?,
-                password: row.get(3)?,
-                created_at: row.get(4)?,
-            })
-        })?;
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r?);
-        }
-        Ok(out)
+            conn.prepare(&format!("SELECT {NODE_COLUMNS} FROM nodes ORDER BY id ASC"))?;
+        let rows = stmt.query_map([], map_node)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     })
     .await
 }
 
 pub async fn get(db: &Db, id: i64) -> anyhow::Result<Option<Node>> {
     db.call(move |conn| {
-        let mut stmt =
-            conn.prepare("SELECT id, name, url, password, created_at FROM nodes WHERE id = ?1")?;
-        let mut rows = stmt.query_map(params![id], |row| {
-            Ok(Node {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                url: row.get(2)?,
-                password: row.get(3)?,
-                created_at: row.get(4)?,
-            })
-        })?;
-        if let Some(r) = rows.next() {
-            Ok(Some(r?))
-        } else {
-            Ok(None)
-        }
+        Ok(conn
+            .query_row(
+                &format!("SELECT {NODE_COLUMNS} FROM nodes WHERE id = ?1"),
+                params![id],
+                map_node,
+            )
+            .optional()?)
     })
     .await
 }
@@ -158,24 +118,13 @@ pub async fn update(
 ) -> anyhow::Result<Option<Node>> {
     db.call(move |conn| {
         let tx = conn.transaction()?;
-        let current: Option<Node> = {
-            let mut stmt =
-                tx.prepare("SELECT id, name, url, password, created_at FROM nodes WHERE id = ?1")?;
-            let mut rows = stmt.query_map(params![id], |row| {
-                Ok(Node {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    url: row.get(2)?,
-                    password: row.get(3)?,
-                    created_at: row.get(4)?,
-                })
-            })?;
-            if let Some(r) = rows.next() {
-                Some(r?)
-            } else {
-                None
-            }
-        };
+        let current = tx
+            .query_row(
+                &format!("SELECT {NODE_COLUMNS} FROM nodes WHERE id = ?1"),
+                params![id],
+                map_node,
+            )
+            .optional()?;
 
         let mut node = match current {
             Some(n) => n,

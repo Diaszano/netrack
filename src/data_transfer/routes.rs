@@ -1,4 +1,4 @@
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{StatusCode, header};
 use axum::response::Response;
 use axum::routing::{get, post};
@@ -14,10 +14,15 @@ use super::{
 use crate::api::{ApiError, ApiQuery, ApiResult, AppState};
 use crate::db::tests_repo;
 
+const MAX_IMPORT_BYTES: usize = 64 * 1024 * 1024;
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/data/export", get(export_data))
-        .route("/api/data/import", post(import_data))
+        .route(
+            "/api/data/import",
+            post(import_data).layer(DefaultBodyLimit::max(MAX_IMPORT_BYTES)),
+        )
         .route("/api/data/stats", get(data_stats))
         .route("/api/data/reset", post(data_reset))
 }
@@ -117,11 +122,13 @@ async fn import_data(State(s): State<AppState>, body: axum::body::Bytes) -> ApiR
         }
     };
 
-    let imported = insert_records(&s.db, records)
+    let out = insert_records(&s.db, records)
         .await
         .map_err(|e| ApiError::bad_request(format!("failed to import records: {e}")))?;
 
-    Ok(Json(json!({ "imported": imported })))
+    Ok(Json(
+        json!({ "imported": out.imported, "skipped": out.skipped }),
+    ))
 }
 
 async fn data_stats(State(s): State<AppState>) -> ApiResult<Json<Value>> {
