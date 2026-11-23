@@ -14,9 +14,10 @@ Monitor de velocidade de internet auto-hospedado, escrito em Rust. Executa teste
   - Internacionalização automática (`pt-BR` e `en`) extensível via arquivos JSON em `web/locales/`.
 - **Segurança e Modos de Acesso**:
   - Níveis de proteção por senha (Argon2id + sessões em SQLite): `none` (sem senha), `public` (leitura pública, alterações protegidas) e `protected` (tudo exige login).
-- **Notificações e Integrações (8 canais × 7 eventos)**:
+- **Notificações e Integrações (8 canais × 8 eventos)**:
   - Canais: **Discord**, **Telegram**, **Pushover**, **Gotify**, **ntfy**, **Webhook genérico**, **InfluxDB v2** e **Healthchecks**.
-  - Eventos: `speedtest.started`, `speedtest.finished`, `speedtest.failed`, `speedtest.degraded`, `minute.passed`, `config.updated`, `expected.updated`.
+  - Eventos: `speedtest.started`, `speedtest.finished`, `speedtest.failed`, `speedtest.degraded`, `speedtest.recovered`, `minute.passed`, `config.updated`, `expected.updated`.
+  - `speedtest.degraded` dispara uma vez por queda (quando o teste anterior não estava lento) e `speedtest.recovered` quando a velocidade volta ao normal.
   - Segredos das integrações voltam mascarados como `***` nas respostas da API; enviar `***` em uma atualização mantém o valor armazenado.
 - **Observabilidade e Dados**:
   - Endpoint **Prometheus** (`/api/prometheus/metrics`) com suporte a Basic Auth.
@@ -25,6 +26,7 @@ Monitor de velocidade de internet auto-hospedado, escrito em Rust. Executa teste
   - Imagem **Open Graph** dinâmica (`/api/opengraph/image`) com o último resultado.
 - **Multi-instância (Nós Remotos)**:
   - Cadastro de múltiplos nós `netrack` e alternância transparente na interface via proxy reverso com streaming (`/api/nodes/{id}/proxy/*`).
+  - O nó principal faz login no nó remoto e usa o token de sessão; a senha do nó não viaja nas requisições do proxy.
 
 ## Como rodar
 
@@ -92,10 +94,11 @@ O container roda como UID 65534 (`nobody`). O diretório montado em `/data` prec
 - `PUT /api/integrations/{id}`, `DELETE /api/integrations/{id}`
 - `POST /api/integrations/{id}/test`
 - `GET /api/prometheus/metrics`
-- `GET /api/data/stats`
-- `GET /api/data/export?format=json|csv`
+- `GET /api/data/stats` (inclui a lista de backups em `backups`)
+- `GET /api/data/backups/{nome}` (baixa um backup diário, ex.: `netrack-2026-11-21.db`)
+- `GET /api/data/export?format=json|csv[&from=AAAA-MM-DD][&to=AAAA-MM-DD]` (período em datas locais, ambas inclusivas)
 - `POST /api/data/import`
-- `DELETE /api/data/reset`
+- `POST /api/data/reset` (apaga o histórico e restaura a config padrão; a senha é mantida)
 - `GET /api/nodes`, `POST /api/nodes`
 - `PUT /api/nodes/{id}`, `DELETE /api/nodes/{id}`
 - `ANY /api/nodes/{id}/proxy/{*path}`
