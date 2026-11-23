@@ -97,12 +97,15 @@ test("settings_view_renders_password_card_prometheus_and_data_management", () =>
   state.dataStats = {
     rowCount: 142,
     dbSizeBytes: 5242880, // 5 MB
+    backups: [{ name: "netrack-2026-11-20.db", sizeBytes: 1024 }],
   };
 
   const html = renderSettings(state, {
     t: tPt,
     locales: [{ code: "pt-BR", name: "Português (Brasil)" }],
   });
+
+  assert.ok(html.includes('href="/api/data/backups/netrack-2026-11-20.db"'), "Must link each backup for download");
 
   // 1. Password protection card
   assert.ok(html.includes('data-form="auth-password"'), "Must render password protection form");

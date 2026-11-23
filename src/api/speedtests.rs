@@ -111,7 +111,7 @@ struct RangeQuery {
     to: Option<String>,
 }
 
-fn parse_date(name: &str, v: Option<&str>) -> Result<NaiveDate, ApiError> {
+pub(crate) fn parse_date(name: &str, v: Option<&str>) -> Result<NaiveDate, ApiError> {
     let v = v.ok_or_else(|| ApiError::bad_request(format!("missing query parameter: {name}")))?;
     // Four-digit years only: chrono also accepts signed years up to its own
     // limits, where the range end (next midnight) is not representable.

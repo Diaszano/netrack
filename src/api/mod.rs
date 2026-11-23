@@ -5,6 +5,7 @@ mod config;
 mod speedtests;
 mod system;
 
+pub(crate) use speedtests::parse_date;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

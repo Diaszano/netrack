@@ -62,7 +62,8 @@ impl TestApp {
         let (tx, rx) = watch::channel(());
         let bk = tempfile::tempdir().unwrap();
         let scheduler = Scheduler::spawn(db.clone(), runner.clone(), rx, bk.path().to_path_buf());
-        let state = AppState::new(db.clone(), runner, tx, Arc::new(scheduler));
+        let state =
+            AppState::new(db.clone(), runner, tx, Arc::new(scheduler)).with_data_dir(bk.path());
         let app = router(state);
         Self {
             app,
@@ -530,9 +531,21 @@ async fn test_reset_auth_protection() {
         )
         .await;
     assert_eq!(status, StatusCode::OK);
+    let cfg = config::load(&app.db).await.unwrap();
+    assert_eq!(
+        cfg.password_mode,
+        PasswordMode::Public,
+        "reset keeps the password"
+    );
+    assert!(netrack::auth::verify_password(
+        "secret123",
+        &cfg.password_hash
+    ));
 
-    // Set to protected mode
-    app.set_password("secret123", PasswordMode::Protected).await;
+    // Set to protected mode (the password survived the reset)
+    config::set_password_and_mode(&app.db, &cfg.password_hash, PasswordMode::Protected)
+        .await
+        .unwrap();
     let (status, _, _) = app
         .post("/api/data/reset", "{}", Some("application/json"), None)
         .await;
@@ -626,4 +639,111 @@ async fn test_import_duplicates_inside_same_file() {
     assert_eq!(status, StatusCode::OK);
     let resp: Value = serde_json::from_str(&resp).unwrap();
     assert_eq!(resp, json!({ "imported": 1, "skipped": 1 }));
+}
+
+#[tokio::test]
+async fn test_csv_round_trip_keeps_multiline_error() {
+    let src = TestApp::new().await;
+    insert(
+        &src.db,
+        NewSpeedtest {
+            kind: TestKind::Auto,
+            provider: "ookla".into(),
+            server_id: None,
+            server_name: Some("Rio, \"BR\"".into()),
+            server_host: None,
+            result_id: None,
+            metrics: Err("speedtest failed: [error] one\n[error] two\n".into()),
+            duration: 3.0,
+        },
+        Utc::now(),
+    )
+    .await
+    .unwrap();
+    let (_, _, csv) = src.get("/api/data/export?format=csv", None).await;
+
+    let dst = TestApp::new().await;
+    let (status, _, body) = dst
+        .post("/api/data/import", csv, Some("text/csv"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rows = netrack::db::tests_repo::all(&dst.db).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].error.as_deref(),
+        Some("speedtest failed: [error] one\n[error] two")
+    );
+    assert_eq!(rows[0].server_name.as_deref(), Some("Rio, \"BR\""));
+}
+
+#[tokio::test]
+async fn test_backups_are_listed_and_downloadable() {
+    let app = TestApp::new().await;
+    let dir = app._bk.path().join("backups");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("netrack-2020-01-02.db"), b"backup-bytes").unwrap();
+    std::fs::write(dir.join("notes.txt"), b"secret").unwrap();
+
+    let (status, _, body) = app.get("/api/data/stats", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let stats: Value = serde_json::from_str(&body).unwrap();
+    let names: Vec<&str> = stats["backups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"netrack-2020-01-02.db"));
+    assert!(!names.contains(&"notes.txt"));
+
+    let (status, headers, body) = app
+        .get("/api/data/backups/netrack-2020-01-02.db", None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, "backup-bytes");
+    assert!(
+        headers[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains("netrack-2020-01-02.db")
+    );
+
+    for bad in ["notes.txt", "..%2Fnetrack.db", "netrack-2020-01-03.db"] {
+        let (status, _, _) = app.get(&format!("/api/data/backups/{bad}"), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn test_export_filters_by_local_date_range() {
+    let app = TestApp::new().await;
+    for d in 1..=3 {
+        let at = Utc.with_ymd_and_hms(2026, 1, d, 12, 0, 0).unwrap();
+        insert_sample_test(&app, None, 100.0, 50.0, 10.0, 1.0, 10.0, at).await;
+    }
+    let count = |body: &str| {
+        serde_json::from_str::<Value>(body)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len()
+    };
+
+    let (status, _, body) = app
+        .get(
+            "/api/data/export?format=json&from=2026-01-02&to=2026-01-02",
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(count(&body), 1);
+
+    let (_, _, body) = app.get("/api/data/export?from=2026-01-02", None).await;
+    assert_eq!(count(&body), 2);
+
+    let (_, _, body) = app.get("/api/data/export", None).await;
+    assert_eq!(count(&body), 3);
+
+    let (status, _, _) = app.get("/api/data/export?from=02/01/2026", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

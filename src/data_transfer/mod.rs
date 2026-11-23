@@ -329,7 +329,23 @@ pub fn parse_csv_records(content: &str) -> Result<Vec<ImportRecord>, String> {
     let header_cols = parse_csv_line(header);
     let mut result = Vec::new();
 
-    for (idx, line) in lines.enumerate() {
+    // A quoted field may span lines (export quotes multi-line errors): join until quotes balance.
+    let mut rows = Vec::new();
+    let mut pending = String::new();
+    for line in lines {
+        if !pending.is_empty() {
+            pending.push('\n');
+        }
+        pending.push_str(line);
+        if pending.matches('"').count().is_multiple_of(2) {
+            rows.push(std::mem::take(&mut pending));
+        }
+    }
+    if !pending.is_empty() {
+        rows.push(pending);
+    }
+
+    for (idx, line) in rows.iter().enumerate() {
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -453,9 +469,16 @@ pub async fn reset_database(db: &Db) -> anyhow::Result<()> {
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM speedtests", [])?;
         let _ = tx.execute("DELETE FROM sqlite_sequence WHERE name = 'speedtests'", []);
-        tx.execute("DELETE FROM config", [])?;
+        // The password survives a reset: wiping it would silently open the instance.
+        tx.execute(
+            "DELETE FROM config WHERE key NOT IN ('password_hash', 'password_mode')",
+            [],
+        )?;
         for (k, v) in crate::db::config::DEFAULTS {
-            tx.execute("INSERT INTO config (key, value) VALUES (?1, ?2)", [*k, *v])?;
+            tx.execute(
+                "INSERT OR IGNORE INTO config (key, value) VALUES (?1, ?2)",
+                [*k, *v],
+            )?;
         }
         tx.commit()?;
         Ok(())
@@ -476,7 +499,9 @@ pub async fn get_data_stats(db: &Db, data_dir: &std::path::Path) -> anyhow::Resu
 
     let db_file = data_dir.join("netrack.db");
     let db_size_bytes = if let Ok(meta) = std::fs::metadata(&db_file) {
-        meta.len()
+        // WAL mode keeps recent writes in a side file until checkpoint.
+        let wal = std::fs::metadata(data_dir.join("netrack.db-wal")).map_or(0, |m| m.len());
+        meta.len() + wal
     } else {
         (page_count.max(0) * page_size.max(0)) as u64
     };
