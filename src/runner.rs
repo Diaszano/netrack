@@ -9,6 +9,7 @@ use std::time::Instant;
 use chrono::Utc;
 use serde::Serialize;
 use tokio::sync::broadcast;
+use tracing::Instrument;
 
 use crate::db::Db;
 use crate::db::config::{self, AppConfig, ExpectedMode};
@@ -139,6 +140,7 @@ impl Runner {
 
     /// [`Runner::run`] with the lock already held; the lock is released when
     /// the run ends. Every `Started` event is followed by `Finished` or `Failed`.
+    #[tracing::instrument(name = "speedtest.run", skip_all, fields(kind = ?kind))]
     pub async fn run_with_guard(&self, _guard: RunGuard, kind: TestKind) -> Result<i64, RunError> {
         let started = Instant::now();
         let cfg = config::load(&self.db).await?;
@@ -192,6 +194,13 @@ impl Runner {
             Ok(metrics) => {
                 let degraded = is_degraded(&metrics, cfg);
                 let was_degraded = self.previous_degraded(cfg).await;
+                crate::telemetry::record_run(
+                    kind,
+                    provider.name(),
+                    Some(&metrics),
+                    duration,
+                    degraded,
+                );
                 self.emit(RunEvent::Finished { id, metrics });
                 if degraded && !was_degraded {
                     self.emit(RunEvent::Degraded {
@@ -208,10 +217,13 @@ impl Runner {
                     tracing::warn!(error = %e, "failed to update expected values");
                 }
             }
-            Err(error) => self.emit(RunEvent::Failed {
-                id: Some(id),
-                error,
-            }),
+            Err(error) => {
+                crate::telemetry::record_run(kind, provider.name(), None, duration, false);
+                self.emit(RunEvent::Failed {
+                    id: Some(id),
+                    error,
+                });
+            }
         }
         Ok(id)
     }
@@ -296,7 +308,11 @@ async fn attempt(
     opts: &RunOptions,
 ) -> Result<Measurement, String> {
     let (provider, opts) = (provider.clone(), opts.clone());
-    match tokio::spawn(async move { provider.run(&opts).await }).await {
+    let task = tokio::spawn(
+        async move { provider.run(&opts).await }
+            .instrument(tracing::info_span!("speedtest.attempt")),
+    );
+    match task.await {
         Ok(Ok(m)) => Ok(m),
         Ok(Err(e)) => Err(e.to_string()),
         Err(join) if join.is_panic() => Err("provider panicked".to_owned()),

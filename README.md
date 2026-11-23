@@ -55,6 +55,25 @@ O container roda como UID 65534 (`nobody`). O diretório montado em `/data` prec
 | `PREVIEW_MESSAGE` | *(padrão)* | Mensagem customizada exibida no banner quando `PREVIEW_MODE=true` |
 | `RUST_LOG` | `info` | Nível de log (`info`, `debug`, ...) |
 
+## OpenTelemetry (OTLP)
+
+Exporta **logs, traces e métricas** para um OpenTelemetry Collector (ou qualquer backend OTLP/HTTP). Fica desligado até você definir um endpoint; sem ele os logs continuam só no stdout.
+
+| Variável | Descrição |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Endpoint base (ex.: `http://otel-collector:4318`); liga os três sinais. O SDK acrescenta `/v1/traces`, `/v1/metrics` e `/v1/logs` |
+| `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_ENDPOINT` | Endpoint de um sinal específico (liga só ele) |
+| `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none` | Desliga um sinal |
+| `OTEL_SDK_DISABLED=true` | Desliga tudo |
+| `OTEL_SERVICE_NAME` | Nome do serviço (padrão `netrack`) |
+| `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_RESOURCE_ATTRIBUTES` | Padrão OpenTelemetry (autenticação, timeout, atributos do recurso) |
+
+Só há suporte a OTLP sobre HTTP/protobuf (porta `4318`); `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` não é suportado.
+
+- **Traces:** um span por requisição HTTP (`GET /api/...`, continua o `traceparent` recebido; `/healthz` fica de fora), por teste (`speedtest.run`) e por tentativa do provedor (`speedtest.attempt`).
+- **Logs:** todos os eventos do `tracing` (respeitando `RUST_LOG`), já correlacionados ao trace/span ativo.
+- **Métricas:** `netrack.speedtest.runs` (por resultado), `netrack.speedtest.degraded`, `netrack.speedtest.duration`, `netrack.speedtest.{download,upload,ping,jitter}` (último teste) e `http.server.request.duration`. As métricas HTTP cobrem só as rotas da API (a UI estática não entra).
+
 ## Portas
 
 - `5216/tcp`: Interface Web e API HTTP (sem `network_mode: host`, publique com `-p 5216:5216`).

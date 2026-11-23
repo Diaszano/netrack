@@ -187,6 +187,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::data_transfer::routes::routes())
         .merge(crate::nodes::routes::routes())
         .merge(crate::opengraph::routes())
+        .route_layer(axum::middleware::from_fn(crate::telemetry::http_middleware))
         .fallback(crate::web::serve)
         .method_not_allowed_fallback(method_not_allowed)
         .layer(axum::middleware::from_fn_with_state(

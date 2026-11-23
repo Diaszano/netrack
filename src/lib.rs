@@ -13,5 +13,6 @@ pub mod runner;
 pub mod scheduler;
 pub mod settings;
 pub mod system;
+pub mod telemetry;
 pub mod version;
 pub mod web;

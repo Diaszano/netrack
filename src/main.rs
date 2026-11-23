@@ -11,15 +11,10 @@ use netrack::scheduler::{Clock, Scheduler, wait_for_clock_past_history};
 use netrack::settings::Settings;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    let telemetry = netrack::telemetry::init()?;
     let settings = Settings::from_env()?;
     tracing::info!(
         port = settings.port,
@@ -119,6 +114,7 @@ async fn main() -> anyhow::Result<()> {
         None => serve(v4).await?,
     }
     drop(app);
+    telemetry.shutdown();
     Ok(())
 }
 
