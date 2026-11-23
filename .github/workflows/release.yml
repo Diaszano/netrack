@@ -27,7 +27,7 @@ jobs:
       # Cargo.lock and CHANGELOG.md). Merging it creates the tag and the GitHub release.
       # Use a PAT in RELEASE_PLEASE_TOKEN if the release PR must trigger CI (GITHUB_TOKEN PRs don't).
       - id: rp
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@v5
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
