@@ -11,7 +11,6 @@ on:
 
 permissions:
   contents: read
-  checks: write
 
 jobs:
   audit:
@@ -20,6 +19,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
+      # Prebuilt binary; the action rustsec/audit-check needs the checks API, which fails on some PRs.
+      - uses: taiki-e/install-action@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tool: cargo-audit
+      # Fails on vulnerabilities; unmaintained-crate warnings do not fail the job.
+      - run: cargo audit --file Cargo.lock
