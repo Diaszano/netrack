@@ -1,0 +1,73 @@
+name: PR checks
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # Same pattern as the local commit-msg hook.
+  COMMIT_RE: '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._-]+\))?!?: .{1,72}$'
+
+jobs:
+  branch-name:
+    name: Branch name
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Validate <type>/<kebab-case>
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          # Bots create their own branch names.
+          case "$BRANCH" in release-please--*|dependabot/*) exit 0 ;; esac
+          re='^(feat|feature|fix|refactor|docs|test|chore|hotfix)/[a-z0-9]+(-[a-z0-9]+)*$'
+          if ! [[ "$BRANCH" =~ $re ]]; then
+            echo "::error::Invalid branch name '$BRANCH'. Use <type>/<kebab-case> with type in feat|feature|fix|refactor|docs|test|chore|hotfix (e.g. fix/order-total-rounding)."
+            exit 1
+          fi
+
+  pr-title:
+    name: PR title (squash commit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Validate Conventional Commits title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! [[ "$TITLE" =~ $COMMIT_RE ]]; then
+            echo "::error::Invalid PR title '$TITLE'. Expected: <type>(<scope>)<!>: <description> (max 72 chars). The title becomes the squash commit and drives the release."
+            exit 1
+          fi
+
+  commits:
+    name: Commit messages
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate every commit in the PR
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          bad=0
+          while read -r sha; do
+            subject="$(git log -1 --format=%s "$sha")"
+            case "$subject" in Merge*|Revert*|fixup!*|squash!*) continue ;; esac
+            if ! [[ "$subject" =~ $COMMIT_RE ]]; then
+              echo "::error::Commit ${sha:0:7} has an invalid message: '$subject'"
+              bad=1
+            fi
+          done < <(git rev-list --no-merges "$BASE..$HEAD")
+          exit $bad
