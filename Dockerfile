@@ -5,13 +5,13 @@ FROM --platform=$BUILDPLATFORM rust:1.99-alpine AS builder
 ARG TARGETARCH
 RUN apk add --no-cache zig musl-dev ca-certificates \
  && rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo install cargo-zigbuild --locked
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs ./
 COPY src ./src
 COPY web ./web
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/src/target,id=netrack-target-$TARGETARCH \
     case "$TARGETARCH" in \
       arm64) T=aarch64-unknown-linux-musl ;; \
