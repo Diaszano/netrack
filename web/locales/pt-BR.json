@@ -249,3 +249,4 @@
 }
   "statistics.byServerTitle": "Por provedor e servidor",
   "statistics.unknownServer": "sem servidor",
+  "integrations.eventRecovered": "Velocidade normalizada (speedtest.recovered)",

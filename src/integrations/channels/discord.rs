@@ -60,6 +60,12 @@ pub async fn send(
             0xFFB020, // Amber
             vec![],
         ),
+        IntegrationEvent::SpeedtestRecovered { .. } => (
+            "Speedtest recovered".to_string(),
+            event.recovered_summary().unwrap_or_default(),
+            0x3FD6C2, // Teal
+            vec![],
+        ),
         IntegrationEvent::SpeedtestFailed { error, .. } => (
             "Speedtest failed".to_string(),
             format!("Error: {error}"),

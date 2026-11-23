@@ -249,3 +249,4 @@
 }
   "statistics.byServerTitle": "By provider and server",
   "statistics.unknownServer": "no server",
+  "integrations.eventRecovered": "Speed back to normal (speedtest.recovered)",

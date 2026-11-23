@@ -25,6 +25,13 @@ pub async fn send(
                 event.degraded_summary().unwrap_or_default()
             ),
         ),
+        IntegrationEvent::SpeedtestRecovered { .. } => (
+            base.to_string(),
+            format!(
+                "Speedtest recovered: {}",
+                event.recovered_summary().unwrap_or_default()
+            ),
+        ),
         IntegrationEvent::SpeedtestFailed { error, .. } => {
             (format!("{base}/fail"), format!("Speedtest failed: {error}"))
         }

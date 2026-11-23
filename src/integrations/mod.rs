@@ -28,6 +28,7 @@ pub const SUPPORTED_EVENTS: &[&str] = &[
     "speedtest.finished",
     "speedtest.failed",
     "speedtest.degraded",
+    "speedtest.recovered",
     "minute.passed",
     "config.updated",
     "expected.updated",
@@ -66,6 +67,11 @@ pub enum IntegrationEvent {
         threshold_pct: u32,
         timestamp: i64,
     },
+    SpeedtestRecovered {
+        id: i64,
+        metrics: Metrics,
+        timestamp: i64,
+    },
     SpeedtestFailed {
         id: Option<i64>,
         error: String,
@@ -94,6 +100,7 @@ impl IntegrationEvent {
             IntegrationEvent::SpeedtestStarted { .. } => "speedtest.started",
             IntegrationEvent::SpeedtestFinished { .. } => "speedtest.finished",
             IntegrationEvent::SpeedtestDegraded { .. } => "speedtest.degraded",
+            IntegrationEvent::SpeedtestRecovered { .. } => "speedtest.recovered",
             IntegrationEvent::SpeedtestFailed { .. } => "speedtest.failed",
             IntegrationEvent::MinutePassed { .. } => "minute.passed",
             IntegrationEvent::ConfigUpdated { .. } => "config.updated",
@@ -120,11 +127,23 @@ impl IntegrationEvent {
         ))
     }
 
+    /// Human-readable summary of a recovered test, shared by the chat channels.
+    pub fn recovered_summary(&self) -> Option<String> {
+        let IntegrationEvent::SpeedtestRecovered { metrics, .. } = self else {
+            return None;
+        };
+        Some(format!(
+            "↓ {:.2} Mbps / ↑ {:.2} Mbps, back to normal",
+            metrics.download, metrics.upload
+        ))
+    }
+
     pub fn timestamp(&self) -> i64 {
         match self {
             IntegrationEvent::SpeedtestStarted { timestamp, .. } => *timestamp,
             IntegrationEvent::SpeedtestFinished { timestamp, .. } => *timestamp,
             IntegrationEvent::SpeedtestDegraded { timestamp, .. } => *timestamp,
+            IntegrationEvent::SpeedtestRecovered { timestamp, .. } => *timestamp,
             IntegrationEvent::SpeedtestFailed { timestamp, .. } => *timestamp,
             IntegrationEvent::MinutePassed { timestamp, .. } => *timestamp,
             IntegrationEvent::ConfigUpdated { timestamp, .. } => *timestamp,
@@ -184,6 +203,17 @@ impl IntegrationEvent {
                         "upload": expected_upload,
                     },
                     "thresholdPct": threshold_pct,
+                })
+            }
+            IntegrationEvent::SpeedtestRecovered { id, metrics, .. } => {
+                json!({
+                    "id": id,
+                    "metrics": {
+                        "download": metrics.download,
+                        "upload": metrics.upload,
+                        "ping": metrics.ping,
+                        "jitter": metrics.jitter,
+                    },
                 })
             }
             IntegrationEvent::SpeedtestFailed { id, error, .. } => {
@@ -453,6 +483,14 @@ impl IntegrationDispatcher {
                                             expected_download,
                                             expected_upload,
                                             threshold_pct,
+                                            timestamp: now,
+                                        };
+                                        dispatch_event(&self.db, &self.client, &ev).await;
+                                    }
+                                    RunEvent::Recovered { id, metrics } => {
+                                        let ev = IntegrationEvent::SpeedtestRecovered {
+                                            id,
+                                            metrics,
                                             timestamp: now,
                                         };
                                         dispatch_event(&self.db, &self.client, &ev).await;

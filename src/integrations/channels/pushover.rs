@@ -42,6 +42,10 @@ pub async fn send(
             "Speedtest degraded".to_string(),
             event.degraded_summary().unwrap_or_default(),
         ),
+        IntegrationEvent::SpeedtestRecovered { .. } => (
+            "Speedtest recovered".to_string(),
+            event.recovered_summary().unwrap_or_default(),
+        ),
         IntegrationEvent::SpeedtestFailed { error, .. } => {
             ("Speedtest failed".to_string(), format!("Error: {error}"))
         }

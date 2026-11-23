@@ -220,7 +220,7 @@ test("integrations_view_renders_8_channels_6_events_and_crud_controls", () => {
     assert.ok(SUPPORTED_CHANNELS.includes(ch), `Must support channel ${ch}`);
     assert.ok(Array.isArray(CHANNEL_CONFIG_FIELDS[ch]), `Must define config fields for ${ch}`);
   }
-  assert.equal(SUPPORTED_EVENTS.length, 7);
+  assert.equal(SUPPORTED_EVENTS.length, 8);
 
   const state = createInitialState();
   state.integrations = {
