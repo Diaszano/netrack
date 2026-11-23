@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
@@ -27,6 +28,7 @@ struct RecordedRequest {
 struct MockNodeServer {
     port: u16,
     requests: Arc<Mutex<Vec<RecordedRequest>>>,
+    logins: Arc<AtomicUsize>,
 }
 
 impl MockNodeServer {
@@ -35,8 +37,36 @@ impl MockNodeServer {
         let port = listener.local_addr().unwrap().port();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let reqs = requests.clone();
+        let logins = Arc::new(AtomicUsize::new(0));
+        let login_count = logins.clone();
 
         let app = Router::new()
+            .route(
+                "/api/auth/login",
+                axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                    let login_count = login_count.clone();
+                    async move {
+                        if body["password"] != "proxy-secret-token" {
+                            return (StatusCode::UNAUTHORIZED, axum::Json(json!({})));
+                        }
+                        let n = login_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        (
+                            StatusCode::OK,
+                            axum::Json(json!({ "token": format!("mock-session-{n}") })),
+                        )
+                    }
+                }),
+            )
+            .route(
+                // Rejects the first session, as if it had expired on the node.
+                "/api/expiring",
+                axum::routing::get(|headers: axum::http::HeaderMap| async move {
+                    match headers.get("authorization").and_then(|v| v.to_str().ok()) {
+                        Some("Bearer mock-session-1") | None => StatusCode::UNAUTHORIZED,
+                        Some(_) => StatusCode::OK,
+                    }
+                }),
+            )
             .route(
                 "/api/system/status",
                 axum::routing::get(|| async {
@@ -118,7 +148,11 @@ impl MockNodeServer {
             axum::serve(listener, app).await.unwrap();
         });
 
-        Self { port, requests }
+        Self {
+            port,
+            requests,
+            logins,
+        }
     }
 
     fn url(&self) -> String {
@@ -535,8 +569,8 @@ async fn test_transparent_proxy_get_and_post() {
         let cookie_hdr = req.headers.get("cookie");
         assert_eq!(
             auth_hdr.map(|s| s.as_str()),
-            Some("Bearer proxy-secret-token"),
-            "Proxy must inject Authorization header"
+            Some("Bearer mock-session-1"),
+            "Proxy must send the session token, never the password"
         );
         assert!(
             !cookie_hdr
@@ -640,4 +674,47 @@ async fn proxy_to_unreachable_node_fails_fast() {
         .await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(started.elapsed() < std::time::Duration::from_secs(7));
+}
+
+#[tokio::test]
+async fn proxy_logs_in_again_when_the_node_session_expires() {
+    let mock = MockNodeServer::start().await;
+    let app = TestApp::new().await;
+    let (_, _, created) = app
+        .request(
+            Method::POST,
+            "/api/nodes",
+            Some(json!({
+                "name": "Expiring",
+                "url": mock.url(),
+                "password": "proxy-secret-token"
+            })),
+            None,
+            None,
+        )
+        .await;
+    let id = created["id"].as_i64().unwrap();
+
+    let (status, _, _) = app
+        .request(
+            Method::GET,
+            &format!("/api/nodes/{id}/proxy/expiring"),
+            None,
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(mock.logins.load(Ordering::SeqCst), 2);
+
+    // The fresh token is cached: no third login.
+    app.request(
+        Method::GET,
+        &format!("/api/nodes/{id}/proxy/speedtests"),
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(mock.logins.load(Ordering::SeqCst), 2);
 }
