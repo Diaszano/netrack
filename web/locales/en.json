@@ -247,3 +247,5 @@
     "S"
   ]
 }
+  "statistics.byServerTitle": "By provider and server",
+  "statistics.unknownServer": "no server",

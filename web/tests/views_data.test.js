@@ -384,3 +384,22 @@ test("renderStatusBadge has no inline color", () => {
   assert.ok(!renderStatusBadge({}, { t: tPt }).includes("style="));
   assert.ok(!renderStatusBadge({ error: "x" }, { t: tPt }).includes("style="));
 });
+
+test("renderStatistics lists each provider/server and escapes names", () => {
+  const state = createMockState({
+    route: "statistics",
+    statsData: {
+      total: 3,
+      failed: 1,
+      byServer: [
+        { provider: "ookla", serverName: "<b>SP</b>", total: 2, failed: 0, download: 150, upload: 40, ping: 9 },
+        { provider: "ookla", serverName: null, total: 1, failed: 1, download: null, upload: null, ping: null },
+      ],
+    },
+  });
+  const html = renderStatistics(state, { t: tPt });
+  assert.ok(html.includes("Por provedor e servidor"));
+  assert.ok(html.includes("&lt;b&gt;SP&lt;/b&gt;"));
+  assert.ok(html.includes("sem servidor"));
+  assert.ok(!html.includes("NaN"));
+});

@@ -182,10 +182,50 @@ export function renderStatistics(state, { t = (k) => k } = {}) {
   </div>
 </div>`;
 
+  // 5. Per provider/server comparison
+  const fmt = (v, key) => (v != null && Number.isFinite(v) ? formatMetric(v, locale, key) : "—");
+  const byServer = Array.isArray(stats.byServer) ? stats.byServer : [];
+  const byServerHtml = byServer.length
+    ? `<div class="card" style="margin-top: 16px;">
+  <div class="card-header">
+    <div class="card-title">${escapeHtml(t("statistics.byServerTitle") || "Por provedor e servidor")}</div>
+  </div>
+  <div class="table-container">
+    <table class="dense-table">
+      <thead>
+        <tr>
+          <th>${escapeHtml(t("history.colServer") || "Provedor & Servidor")}</th>
+          <th>${escapeHtml(t("statistics.total") || "Total de testes")}</th>
+          <th>${escapeHtml(t("statistics.failures") || "Falhas")}</th>
+          <th>${escapeHtml(t("history.colDownload") || "Download")}</th>
+          <th>${escapeHtml(t("history.colUpload") || "Upload")}</th>
+          <th>${escapeHtml(t("history.colPing") || "Ping")}</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${byServer
+          .map(
+            (s) => `<tr>
+          <td>${escapeHtml(s.provider)} · ${escapeHtml(s.serverName || t("statistics.unknownServer") || "sem servidor")}</td>
+          <td class="num-col">${escapeHtml(formatNumber(s.total, locale))}</td>
+          <td class="num-col">${escapeHtml(formatNumber(s.failed, locale))}</td>
+          <td class="num-col">${escapeHtml(fmt(s.download, "download"))}</td>
+          <td class="num-col">${escapeHtml(fmt(s.upload, "upload"))}</td>
+          <td class="num-col">${escapeHtml(fmt(s.ping, "ping"))}</td>
+        </tr>`,
+          )
+          .join("")}
+      </tbody>
+    </table>
+  </div>
+</div>`
+    : "";
+
   return `<div class="view-statistics">
   ${headerHtml}
   ${kpiStripHtml}
   ${metricsGridHtml}
   ${chartsHtml}
+  ${byServerHtml}
 </div>`;
 }

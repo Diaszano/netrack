@@ -247,3 +247,5 @@
     "D"
   ]
 }
+  "statistics.byServerTitle": "Por provedor e servidor",
+  "statistics.unknownServer": "sem servidor",
