@@ -322,3 +322,35 @@ async fn try_acquire_is_exclusive_until_guard_dropped() {
     assert!(id > 0);
     assert!(!runner.is_running());
 }
+
+#[tokio::test]
+async fn degraded_fires_once_per_slowdown_then_recovered() {
+    let p = FakeProvider::new(vec![
+        Ok(m(12.0, 10.0, 80.0)),
+        Ok(m(12.0, 10.0, 80.0)),
+        Ok(m(12.0, 300.0, 80.0)),
+        Ok(m(12.0, 300.0, 80.0)),
+    ]);
+    let (db, runner) = setup(&p).await;
+    config::set(&db, "expected_mode", "manual").await.unwrap();
+    config::set(&db, "expected_download", "100").await.unwrap();
+    config::set(&db, "expected_upload", "0").await.unwrap();
+    let mut rx = runner.subscribe();
+    let mut kinds = Vec::new();
+    for _ in 0..4 {
+        runner.run(TestKind::Auto).await.unwrap();
+        let mut run = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            run.push(match ev {
+                RunEvent::Degraded { .. } => "degraded",
+                RunEvent::Recovered { .. } => "recovered",
+                _ => continue,
+            });
+        }
+        kinds.push(run);
+    }
+    assert_eq!(
+        kinds,
+        vec![vec!["degraded"], vec![], vec!["recovered"], vec![]]
+    );
+}

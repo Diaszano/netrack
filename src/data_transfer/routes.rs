@@ -11,7 +11,9 @@ use super::{
     escape_csv, get_data_stats, insert_records, parse_csv_records, parse_json_records,
     reset_database,
 };
-use crate::api::{ApiError, ApiQuery, ApiResult, AppState};
+use crate::api::{ApiError, ApiPath, ApiQuery, ApiResult, AppState, parse_date};
+use crate::db::backup;
+use crate::db::stats::local_midnight_ms;
 use crate::db::tests_repo;
 
 const MAX_IMPORT_BYTES: usize = 64 * 1024 * 1024;
@@ -24,12 +26,16 @@ pub fn routes() -> Router<AppState> {
             post(import_data).layer(DefaultBodyLimit::max(MAX_IMPORT_BYTES)),
         )
         .route("/api/data/stats", get(data_stats))
+        .route("/api/data/backups/{name}", get(download_backup))
         .route("/api/data/reset", post(data_reset))
 }
 
 #[derive(Debug, Deserialize)]
 struct ExportQuery {
     format: Option<String>,
+    /// Optional local-date range (`YYYY-MM-DD`, both ends inclusive), like the statistics API.
+    from: Option<String>,
+    to: Option<String>,
 }
 
 async fn export_data(
@@ -37,7 +43,23 @@ async fn export_data(
     ApiQuery(query): ApiQuery<ExportQuery>,
 ) -> ApiResult<Response> {
     let format = query.format.as_deref().unwrap_or("json").to_lowercase();
-    let rows = tests_repo::all(&s.db).await?;
+    let tz = s.db.tz();
+    let bound = |name: &str, v: Option<&str>, next_day: bool| -> ApiResult<Option<i64>> {
+        let Some(v) = v else { return Ok(None) };
+        let mut day = parse_date(name, Some(v))?;
+        if next_day {
+            day = day
+                .succ_opt()
+                .ok_or_else(|| ApiError::bad_request(format!("{name} is out of range")))?;
+        }
+        Ok(Some(local_midnight_ms(tz, day)?))
+    };
+    let from_ms = bound("from", query.from.as_deref(), false)?;
+    let to_ms = bound("to", query.to.as_deref(), true)?;
+    let mut rows = tests_repo::all(&s.db).await?;
+    rows.retain(|r| {
+        from_ms.is_none_or(|f| r.created_at >= f) && to_ms.is_none_or(|t| r.created_at < t)
+    });
     let timestamp = Utc::now().timestamp();
 
     match format.as_str() {
@@ -133,10 +155,40 @@ async fn import_data(State(s): State<AppState>, body: axum::body::Bytes) -> ApiR
 
 async fn data_stats(State(s): State<AppState>) -> ApiResult<Json<Value>> {
     let (row_count, db_size_bytes) = get_data_stats(&s.db, &s.data_dir).await?;
+    let backups: Vec<Value> = backup::list(&s.data_dir)
+        .await?
+        .into_iter()
+        .map(|(name, size)| json!({ "name": name, "sizeBytes": size }))
+        .collect();
     Ok(Json(json!({
         "rowCount": row_count,
         "dbSizeBytes": db_size_bytes,
+        "backups": backups,
     })))
+}
+
+async fn download_backup(
+    State(s): State<AppState>,
+    ApiPath(name): ApiPath<String>,
+) -> ApiResult<Response> {
+    let not_found = || ApiError::new(StatusCode::NOT_FOUND, "backup not found");
+    if !backup::is_backup_name(&name) {
+        return Err(not_found());
+    }
+    // shortcut: reads the whole file into memory; fine for SQLite files of a few MB, stream it if they grow past ~100 MB.
+    let bytes = match tokio::fs::read(s.data_dir.join("backups").join(&name)).await {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(not_found()),
+        Err(e) => return Err(anyhow::Error::from(e).into()),
+    };
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/vnd.sqlite3")
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{name}\""),
+        )
+        .body(axum::body::Body::from(bytes))
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
 async fn data_reset(State(s): State<AppState>) -> ApiResult<Json<Value>> {

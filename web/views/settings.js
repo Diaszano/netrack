@@ -241,10 +241,22 @@ export function renderSettings(state, { t = (k) => k, locales = [] } = {}) {
   const rowCount = state?.dataStats?.rowCount != null ? String(state.dataStats.rowCount) : "—";
   const dbSize = state?.dataStats?.dbSizeBytes != null ? formatBytes(state.dataStats.dbSizeBytes, locale) : "—";
   const activeNodeId = state?.nodes?.activeNodeId;
-  const exportBase =
+  const dataBase =
     activeNodeId != null && activeNodeId !== "" && activeNodeId !== "local"
-      ? `/api/nodes/${encodeURIComponent(activeNodeId)}/proxy/data/export`
-      : "/api/data/export";
+      ? `/api/nodes/${encodeURIComponent(activeNodeId)}/proxy/data`
+      : "/api/data";
+  const exportBase = `${dataBase}/export`;
+  const backups = Array.isArray(state?.dataStats?.backups) ? state.dataStats.backups : [];
+  const backupsHtml = backups.length
+    ? `<ul style="list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 6px;">${backups
+        .map(
+          (b) => `<li style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+        <span style="font-family: var(--font-mono);">${escapeHtml(b.name)} · ${escapeHtml(formatBytes(b.sizeBytes, locale))}</span>
+        <a href="${escapeHtml(`${dataBase}/backups/${encodeURIComponent(b.name)}`)}" download class="btn btn-secondary">${escapeHtml(t("settings.backupDownload") || "Baixar")}</a>
+      </li>`,
+        )
+        .join("")}</ul>`
+    : `<div class="form-help">${escapeHtml(t("settings.backupsEmpty") || "Nenhum backup ainda. O primeiro é criado ao iniciar e depois todo dia às 03:00.")}</div>`;
 
   const dataCardHtml = `<div class="card">
   <div class="card-header">
@@ -268,6 +280,11 @@ export function renderSettings(state, { t = (k) => k, locales = [] } = {}) {
       <a href="${escapeHtml(exportBase)}?format=json" download class="btn btn-secondary" data-action="export-json">${escapeHtml(t("settings.exportJson") || "Exportar JSON")}</a>
       <a href="${escapeHtml(exportBase)}?format=csv" download class="btn btn-secondary" data-action="export-csv">${escapeHtml(t("settings.exportCsv") || "Exportar CSV")}</a>
     </div>
+  </div>
+
+  <div class="form-group">
+    <div class="form-label">${escapeHtml(t("settings.backupsTitle") || "Backups diários")}</div>
+    ${backupsHtml}
   </div>
 
   <div style="border-top: 1px solid var(--border); margin-top: 16px; padding-top: 14px;">

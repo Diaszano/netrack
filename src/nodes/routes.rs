@@ -9,7 +9,7 @@ use axum::response::Response;
 use axum::routing::{any, get};
 use serde::Deserialize;
 
-use super::{NodeResponse, NodeStatusResponse};
+use super::{Node, NodeResponse, NodeStatusResponse};
 use crate::api::{ApiError, ApiJson, ApiPath, ApiResult, AppState};
 use crate::db::tests_repo::SpeedtestRow;
 
@@ -164,17 +164,10 @@ async fn node_status(
     let status_url = format!("{base_url}/api/system/status");
     let speedtests_url = format!("{base_url}/api/speedtests?limit=1");
 
-    let mut status_req = s.http.get(&status_url).timeout(Duration::from_secs(5));
-    let mut speedtests_req = s.http.get(&speedtests_url).timeout(Duration::from_secs(5));
+    let status_req = s.http.get(&status_url).timeout(Duration::from_secs(5));
+    let speedtests_req = s.http.get(&speedtests_url).timeout(Duration::from_secs(5));
 
-    if let Some(pwd) = &node.password
-        && !pwd.trim().is_empty()
-    {
-        status_req = status_req.header(header::AUTHORIZATION, format!("Bearer {pwd}"));
-        speedtests_req = speedtests_req.header(header::AUTHORIZATION, format!("Bearer {pwd}"));
-    }
-
-    let status_resp = status_req.send().await;
+    let status_resp = send_authed(&s, &node, status_req).await;
     let (online, version, error) = match status_resp {
         Ok(resp) if resp.status().is_success() => {
             let bytes = resp.bytes().await.unwrap_or_default();
@@ -199,7 +192,7 @@ async fn node_status(
 
     let mut latest_test = None;
     if online
-        && let Ok(resp) = speedtests_req.send().await
+        && let Ok(resp) = send_authed(&s, &node, speedtests_req).await
         && resp.status().is_success()
         && let Ok(bytes) = resp.bytes().await
         && let Ok(rows) = serde_json::from_slice::<Vec<SpeedtestRow>>(&bytes)
@@ -295,11 +288,6 @@ async fn proxy_req(
         req_builder = req_builder.header(name.clone(), val.clone());
     }
 
-    if let Some(pwd) = &node.password
-        && !pwd.trim().is_empty()
-    {
-        req_builder = req_builder.header(header::AUTHORIZATION, format!("Bearer {pwd}"));
-    }
     if let Some(cookie_str) = orig_cookie {
         let parts: Vec<&str> = cookie_str
             .split(';')
@@ -311,11 +299,13 @@ async fn proxy_req(
         }
     }
 
-    let body = req.into_body();
-    let reqwest_body = reqwest::Body::wrap_stream(body.into_data_stream());
-    req_builder = req_builder.body(reqwest_body);
+    // Buffered (not streamed) so the request can be resent after a fresh login.
+    let body = axum::body::to_bytes(req.into_body(), MAX_PROXY_BODY)
+        .await
+        .map_err(|_| ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "request body too large"))?;
+    req_builder = req_builder.body(body);
 
-    let resp = req_builder.send().await.map_err(|e| {
+    let resp = send_authed(state, &node, req_builder).await.map_err(|e| {
         ApiError::new(
             StatusCode::BAD_GATEWAY,
             format!("failed to proxy request to node: {e}"),
@@ -352,4 +342,71 @@ async fn proxy_req(
         .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(response)
+}
+
+/// Matches the import limit, the largest body the UI sends through the proxy.
+const MAX_PROXY_BODY: usize = 64 * 1024 * 1024;
+
+/// Sends `req` with the node's session token. A 401 means the token expired or was revoked
+/// (password change on the node), so it logs in once more and resends.
+async fn send_authed(
+    s: &AppState,
+    node: &Node,
+    req: reqwest::RequestBuilder,
+) -> reqwest::Result<reqwest::Response> {
+    let retry = req.try_clone();
+    let token = node_token(s, node, false).await;
+    let req = match &token {
+        Some(t) => req.bearer_auth(t),
+        None => req,
+    };
+    let resp = req.send().await?;
+    if resp.status() != reqwest::StatusCode::UNAUTHORIZED || token.is_none() {
+        return Ok(resp);
+    }
+    match (retry, node_token(s, node, true).await) {
+        (Some(req), Some(t)) => req.bearer_auth(t).send().await,
+        _ => Ok(resp),
+    }
+}
+
+/// Session token for `node`, from the cache or a login with its password, so the password
+/// itself never travels on proxied requests. `None` without a password or when login fails;
+/// the request then goes out unauthenticated and the node's 401 reaches the user.
+async fn node_token(s: &AppState, node: &Node, fresh: bool) -> Option<String> {
+    let password = node.password.as_deref().filter(|p| !p.trim().is_empty())?;
+    // Keyed by url and password, so editing the node never reuses a stale token.
+    let key = (node.url.clone(), password.to_owned());
+    if !fresh
+        && let Some(t) = s
+            .node_tokens
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+    {
+        return Some(t.clone());
+    }
+    let url = format!("{}/api/auth/login", node.url.trim_end_matches('/'));
+    let body = serde_json::json!({ "password": password }).to_string();
+    let resp = s
+        .http
+        .post(url)
+        .timeout(Duration::from_secs(5))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(body)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        tracing::warn!(node_id = node.id, status = %resp.status(), "login to remote node failed");
+        return None;
+    }
+    let bytes = resp.bytes().await.ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let token = value.get("token")?.as_str()?.to_owned();
+    s.node_tokens
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, token.clone());
+    Some(token)
 }

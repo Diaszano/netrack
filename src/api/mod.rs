@@ -5,6 +5,8 @@ mod config;
 mod speedtests;
 mod system;
 
+pub(crate) use speedtests::parse_date;
+
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -52,9 +54,11 @@ pub struct AppState {
     pub trust_proxy: bool,
     /// Add `Secure` to the session cookie (needs HTTPS in front).
     pub secure_cookie: bool,
-    /// (password hash, password) last verified via Bearer: a primary node resends the raw
+    /// (password hash, password) last verified via Bearer: older primaries resend the raw
     /// password on every proxied request, which must not cost Argon2 or lockout attempts.
     pub(crate) bearer_cache: Arc<Mutex<Option<(String, String)>>>,
+    /// Session tokens this instance holds on remote nodes, by (node url, node password).
+    pub(crate) node_tokens: Arc<Mutex<std::collections::HashMap<(String, String), String>>>,
 }
 
 impl AppState {
@@ -88,6 +92,7 @@ impl AppState {
             trust_proxy: false,
             secure_cookie: false,
             bearer_cache: Arc::default(),
+            node_tokens: Arc::default(),
         }
     }
 

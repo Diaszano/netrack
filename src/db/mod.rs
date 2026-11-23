@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use chrono::{Datelike, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 use rusqlite::{Connection, OptionalExtension};
@@ -73,9 +73,8 @@ impl Db {
     {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
-            let mut guard = conn
-                .lock()
-                .map_err(|_| anyhow!("database mutex poisoned"))?;
+            // A panicked closure must not take the database down; its transaction rolled back on drop.
+            let mut guard = conn.lock().unwrap_or_else(|e| e.into_inner());
             f(&mut guard)
         })
         .await

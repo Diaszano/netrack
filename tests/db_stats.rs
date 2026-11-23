@@ -270,3 +270,37 @@ async fn window_counts_and_averages_ok_only() {
     assert_eq!(w.avg_upload, Some(50.0));
     assert_eq!(w.avg_ping, Some(10.0));
 }
+
+#[tokio::test]
+async fn by_server_groups_provider_and_server() {
+    let db = Db::open_in_memory(Tz::UTC).await.unwrap();
+    let on = |server: &str, m: Result<Metrics, String>| NewSpeedtest {
+        server_name: Some(server.into()),
+        ..new_test(m)
+    };
+    for (i, d) in [100.0, 200.0].into_iter().enumerate() {
+        tests_repo::insert(&db, on("SP", dl(d)), at(2026, 11, 1, 10 + i as u32, 0))
+            .await
+            .unwrap();
+    }
+    tests_repo::insert(&db, on("RJ", dl(50.0)), at(2026, 11, 1, 13, 0))
+        .await
+        .unwrap();
+    add(&db, Err("boom".into()), at(2026, 11, 1, 14, 0)).await;
+    let s = statistics(&db, day(2026, 11, 1), day(2026, 11, 1))
+        .await
+        .unwrap();
+    let rows: Vec<_> = s
+        .by_server
+        .iter()
+        .map(|r| (r.server_name.as_deref(), r.total, r.failed, r.download))
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            (Some("SP"), 2, 0, Some(150.0)),
+            (None, 1, 1, None),
+            (Some("RJ"), 1, 0, Some(50.0)),
+        ]
+    );
+}

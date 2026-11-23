@@ -31,13 +31,19 @@ pub enum RunEvent {
         id: i64,
         metrics: Metrics,
     },
-    /// Emitted right after `Finished` when a metric is below the threshold.
+    /// Emitted right after `Finished` when a metric drops below the threshold
+    /// and the previous successful test was not degraded (one alert per slowdown).
     Degraded {
         id: i64,
         metrics: Metrics,
         expected_download: f64,
         expected_upload: f64,
         threshold_pct: u32,
+    },
+    /// Emitted right after `Finished` when the previous successful test was degraded and this one is not.
+    Recovered {
+        id: i64,
+        metrics: Metrics,
     },
     /// `id` is `None` (serialized as `null`) when no row could be stored.
     Failed {
@@ -185,8 +191,9 @@ impl Runner {
         match metrics {
             Ok(metrics) => {
                 let degraded = is_degraded(&metrics, cfg);
+                let was_degraded = self.previous_degraded(cfg).await;
                 self.emit(RunEvent::Finished { id, metrics });
-                if degraded {
+                if degraded && !was_degraded {
                     self.emit(RunEvent::Degraded {
                         id,
                         metrics,
@@ -194,6 +201,8 @@ impl Runner {
                         expected_upload: cfg.expected_upload,
                         threshold_pct: cfg.degraded_threshold_pct,
                     });
+                } else if !degraded && was_degraded {
+                    self.emit(RunEvent::Recovered { id, metrics });
                 }
                 if let Err(e) = self.update_expected().await {
                     tracing::warn!(error = %e, "failed to update expected values");
@@ -205,6 +214,26 @@ impl Runner {
             }),
         }
         Ok(id)
+    }
+
+    /// Whether the successful test before the one just stored was degraded under `cfg`.
+    /// Read from history, so the state survives restarts.
+    async fn previous_degraded(&self, cfg: &AppConfig) -> bool {
+        match tests_repo::last_successful(&self.db, 2).await {
+            Ok(rows) => rows.get(1).is_some_and(|r| {
+                let m = Metrics {
+                    ping: r.ping.unwrap_or_default(),
+                    jitter: r.jitter.unwrap_or_default(),
+                    download: r.download.unwrap_or_default(),
+                    upload: r.upload.unwrap_or_default(),
+                };
+                is_degraded(&m, cfg)
+            }),
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot read previous test; treating it as not degraded");
+                false
+            }
+        }
     }
 
     /// With `expected_mode=auto` and enough history, sets the expected values

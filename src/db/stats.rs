@@ -25,6 +25,22 @@ pub struct Statistics {
     pub heatmap: Vec<HeatCell>,
     /// At most 300 points, oldest first.
     pub series: Vec<SeriesPoint>,
+    /// One row per provider and server, most tests first.
+    pub by_server: Vec<ServerStat>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerStat {
+    pub provider: String,
+    /// `None` for failed tests that never reached a server.
+    pub server_name: Option<String>,
+    pub total: u64,
+    pub failed: u64,
+    /// Averages of successful tests only.
+    pub download: Option<f64>,
+    pub upload: Option<f64>,
+    pub ping: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -80,7 +96,7 @@ fn round2(v: Option<f64>) -> Option<f64> {
 
 /// Start of `date` in `tz` as unix ms. Ambiguous midnights resolve to the earlier
 /// instant; a nonexistent midnight (DST gap) resolves to the first valid instant after it.
-fn local_midnight_ms(tz: Tz, date: NaiveDate) -> anyhow::Result<i64> {
+pub(crate) fn local_midnight_ms(tz: Tz, date: NaiveDate) -> anyhow::Result<i64> {
     let midnight = date.and_hms_opt(0, 0, 0).context("invalid date")?;
     for minutes in 0..=(48 * 60) {
         match tz.from_local_datetime(&(midnight + Duration::minutes(minutes))) {
@@ -162,7 +178,31 @@ fn query(conn: &Connection, from_ms: i64, to_ms: i64) -> anyhow::Result<Statisti
         hourly: hourly(conn, from_ms, to_ms)?,
         heatmap: heatmap(conn, from_ms, to_ms)?,
         series: series(conn, from_ms, to_ms)?,
+        by_server: by_server(conn, from_ms, to_ms)?,
     })
+}
+
+fn by_server(conn: &Connection, from_ms: i64, to_ms: i64) -> anyhow::Result<Vec<ServerStat>> {
+    let mut stmt = conn.prepare(
+        "SELECT provider, server_name, COUNT(*), COUNT(error), \
+         AVG(download) FILTER (WHERE error IS NULL), \
+         AVG(upload) FILTER (WHERE error IS NULL), \
+         AVG(ping) FILTER (WHERE error IS NULL) \
+         FROM speedtests WHERE created_at >= ?1 AND created_at < ?2 \
+         GROUP BY provider, server_name ORDER BY COUNT(*) DESC, provider, server_name",
+    )?;
+    let rows = stmt.query_map([from_ms, to_ms], |r| {
+        Ok(ServerStat {
+            provider: r.get(0)?,
+            server_name: r.get(1)?,
+            total: r.get::<_, i64>(2)? as u64,
+            failed: r.get::<_, i64>(3)? as u64,
+            download: round2(r.get(4)?),
+            upload: round2(r.get(5)?),
+            ping: round2(r.get(6)?),
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 fn summaries(conn: &Connection, from_ms: i64, to_ms: i64) -> anyhow::Result<[MetricSummary; 4]> {

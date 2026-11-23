@@ -58,6 +58,12 @@ pub async fn send(
                 event.degraded_summary().unwrap_or_default()
             )
         }
+        IntegrationEvent::SpeedtestRecovered { .. } => {
+            format!(
+                "✅ *Netrack: Speedtest recovered*\n\n{}",
+                event.recovered_summary().unwrap_or_default()
+            )
+        }
         IntegrationEvent::SpeedtestFailed { error, .. } => {
             format!("❌ *Netrack: Speedtest failed*\n\nError: `{error}`")
         }
