@@ -35,6 +35,22 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      # Enables auto-merge on the release PR (falls back to immediate merge when no required checks
+      # are pending). Requires a PAT in RELEASE_PLEASE_TOKEN so the merge commit triggers the next
+      # Release run (tag + GHCR publish); merges made with GITHUB_TOKEN do not trigger workflows.
+      - name: Auto-merge release PR
+        if: steps.rp.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_JSON: ${{ steps.rp.outputs.pr }}
+        run: |
+          PR_NUMBER=$(jq -r '.number // empty' <<<"$PR_JSON")
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr merge "$PR_NUMBER" --auto --squash --delete-branch \
+              || gh pr merge "$PR_NUMBER" --squash --delete-branch
+          fi
+
   docker:
     name: Publish image to GHCR
     needs: release-please
