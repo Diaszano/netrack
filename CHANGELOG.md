@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/Diaszano/netrack/compare/netrack-v0.2.0...netrack-v0.2.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* **auth:** migrate to argon2 0.6 password hashing api ([#20](https://github.com/Diaszano/netrack/issues/20)) ([88eb095](https://github.com/Diaszano/netrack/commit/88eb095f005b58399767e87a08e8303d4e605930))
+
 ## [0.2.0](https://github.com/Diaszano/netrack/compare/netrack-v0.1.0...netrack-v0.2.0) (2026-11-23)
 
 
