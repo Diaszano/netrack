@@ -124,7 +124,7 @@ Só há suporte a OTLP sobre HTTP/protobuf (porta `4318`); `OTEL_EXPORTER_OTLP_P
 
 ## Benchmarks
 
-Alvo: Orange Pi Zero 3. Resultados **pendentes** (requer o hardware).
+Alvo: Orange Pi Zero 3 (4 núcleos, 4 GB). Medido em 2026-11-24 com o commit `aa1c994`, provedor Cloudflare (POA).
 
 Procedimento de aceite:
 
@@ -150,15 +150,26 @@ Procedimento de aceite:
 
 | Item | Execução 1 | Execução 2 | Execução 3 | Aceite |
 |---|---|---|---|---|
-| Ping (ms), netrack | pendente | pendente | pendente | ±5 ms do Cloudflare |
-| Ping (ms), speed.cloudflare.com | pendente | pendente | pendente | |
-| Download (Mbps), netrack | pendente | pendente | pendente | ±10% do Cloudflare |
-| Download (Mbps), speed.cloudflare.com | pendente | pendente | pendente | |
-| Upload (Mbps), netrack | pendente | pendente | pendente | ±10% do Cloudflare |
-| Upload (Mbps), speed.cloudflare.com | pendente | pendente | pendente | |
-| Pico de CPU do processo (`top`) | pendente | pendente | pendente | < 80% de um núcleo |
+| Ping (ms), netrack | 12,71 | 12,62 | 12,06 | ✅ ±5 ms do Cloudflare |
+| Ping (ms), speed.cloudflare.com | 15,6 | 15,4 | — | |
+| Download (Mbps), netrack | 217,07 | 218,50 | 218,19 | ✅ ±10% do Cloudflare |
+| Download (Mbps), speed.cloudflare.com | 212 | 212 | — | |
+| Upload (Mbps), netrack | 260,32 | 260,81 | 261,52 | ✅ ±10% do Cloudflare (ver nota) |
+| Upload (Mbps), speed.cloudflare.com | 138 | 123 | — | |
+| Upload (Mbps), `curl` paralelo no Pi | 240,60 (8 conexões) | 234,44 (16 conexões) | — | |
+| Pico de CPU do processo (`top`) | 40,0% | 44,0% | 58,8% | ✅ < 80% de um núcleo |
 
 | Item | Resultado | Aceite |
 |---|---|---|
-| RSS em repouso | pendente | < 30 MB |
-| `statistics` com 1 ano | pendente | anotar tempo |
+| RSS em repouso | 6,6–7,4 MB | ✅ < 30 MB |
+| `statistics` com 1 ano | 0,38 s (17.520 testes sintéticos, 1 a cada 30 min) | anotar tempo |
+
+Nota sobre o upload: o speed.cloudflare.com no navegador e o `curl` com uma
+conexão (91–153 Mbps) não saturam o link, então não servem de referência para
+o netrack, que usa até 32 conexões. A referência usada foi o tempo total de
+8 e 16 uploads simultâneos de 25 MB para `https://speed.cloudflare.com/__up`
+feitos do próprio Pi, que inclui a confirmação do servidor. O netrack ficou
+cerca de 8% acima dela, dentro do aceite, mas consistente com uma pequena
+superestimação pela contagem na entrega ao cliente HTTP (passo 5).
+
+O navegador rodou num Mac na mesma rede, não num PC cabeado.
