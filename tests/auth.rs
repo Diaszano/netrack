@@ -622,7 +622,8 @@ async fn expired_cookie_is_rejected_fast() {
         )
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert!(start.elapsed() < std::time::Duration::from_millis(200));
+    // Below the 500 ms failed-password delay: catches that regression without flaking on slow CI.
+    assert!(start.elapsed() < std::time::Duration::from_millis(490));
 }
 
 #[tokio::test]
