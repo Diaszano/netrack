@@ -1,3 +1,5 @@
+<div align="center">
+
 # netrack
 
 [English](README.md) · **Português (Brasil)**
@@ -6,6 +8,8 @@
 [![Release](https://img.shields.io/github/v/release/Diaszano/netrack?style=flat-square)](https://github.com/Diaszano/netrack/releases)
 [![Platforms](https://img.shields.io/badge/Docker-amd64%20%7C%20arm64-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/Diaszano/netrack/pkgs/container/netrack)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+
+</div>
 
 Monitor de velocidade de internet auto-hospedado em Rust, com interface web responsiva, API HTTP JSON e observabilidade Prometheus/OpenTelemetry em um único binário estático.
 
