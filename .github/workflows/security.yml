@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Prebuilt binary; the action rustsec/audit-check needs the checks API, which fails on some PRs.
       - uses: taiki-e/install-action@v2
         with:
