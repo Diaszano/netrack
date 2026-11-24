@@ -1,6 +1,6 @@
 services:
   netrack:
-    image: netrack:dev
+    image: ghcr.io/diaszano/netrack:latest
     container_name: netrack
     network_mode: host
     environment:

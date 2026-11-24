@@ -2,11 +2,14 @@
 
 **English** · [Português (Brasil)](README.pt-BR.md)
 
-Self-hosted internet speed monitor written in Rust. netrack runs speed tests on a schedule
-(**Cloudflare**, **LibreSpeed** or **Ookla Speedtest CLI**), keeps the history in SQLite and serves a
-responsive web UI, a JSON HTTP API and a Prometheus endpoint, all from a single static binary
-(~11 MB `scratch` image) for `linux/amd64` and `linux/arm64`. It runs comfortably on a
-Raspberry Pi–class board: under 8 MB of RAM at rest on an Orange Pi Zero 3.
+[![CI](https://img.shields.io/github/actions/workflow/status/Diaszano/netrack/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Diaszano/netrack/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Diaszano/netrack?style=flat-square)](https://github.com/Diaszano/netrack/releases)
+[![Platforms](https://img.shields.io/badge/Docker-amd64%20%7C%20arm64-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/Diaszano/netrack/pkgs/container/netrack)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+
+Self-hosted internet speed monitor written in Rust, with a responsive web UI, JSON HTTP API, and Prometheus/OpenTelemetry observability in a single static binary.
+
+Runs scheduled speed tests (**Cloudflare**, **LibreSpeed**, or **Ookla Speedtest CLI**), stores history in SQLite, and ships as a ~11 MB `scratch` image for `linux/amd64` and `linux/arm64` — using under 8 MB of RAM at rest on an Orange Pi Zero 3.
 
 ![Overview](docs/images/en/overview.png)
 
@@ -29,6 +32,25 @@ Raspberry Pi–class board: under 8 MB of RAM at rest on an Orange Pi Zero 3.
   rotation, configurable retention.
 - **Access control:** no password, public read-only, or fully protected (Argon2id, login lockout).
 
+## Quick start
+
+```bash
+mkdir -p data && sudo chown 65534:65534 data
+docker run -d --name netrack --network host \
+  -e TZ=UTC \
+  -v "$PWD/data:/data" \
+  --restart unless-stopped \
+  ghcr.io/diaszano/netrack:latest
+```
+
+Open `http://<host>:5216` (or check `curl http://localhost:5216/healthz`).
+
+- Set `TZ` to your IANA time zone (for example, `America/Sao_Paulo` or `Europe/London`).
+- The container runs as UID `65534` (`nobody`), so a bind-mounted `./data` directory must be owned by `65534:65534` (a named Docker volume works without `chown`).
+- `--network host` lets netrack measure the host's real network interface on Linux. With bridge networking (or Docker Desktop), replace `--network host` with `-p 5216:5216`.
+
+See [Installation](docs/en/installation.md) for Docker Compose, building from source, and running behind a reverse proxy.
+
 ## Screenshots
 
 | Statistics | History |
@@ -40,21 +62,6 @@ Raspberry Pi–class board: under 8 MB of RAM at rest on an Orange Pi Zero 3.
 | ![Nodes](docs/images/en/nodes.png) | ![Settings](docs/images/en/settings.png) |
 
 <p align="center"><img src="docs/images/en/mobile-overview.png" alt="Mobile overview" width="300"></p>
-
-## Quick start
-
-```bash
-mkdir -p data && sudo chown 65534:65534 data
-docker run -d --name netrack --network host \
-  -e TZ=America/Sao_Paulo \
-  -v "$PWD/data:/data" \
-  --restart unless-stopped \
-  ghcr.io/diaszano/netrack:latest
-```
-
-Open `http://<host>:5216`. `--network host` makes the test measure the host's real network
-interface. See [Installation](docs/en/installation.md) for Docker Compose, building from source and
-running behind a reverse proxy.
 
 ## Documentation
 
@@ -71,3 +78,12 @@ running behind a reverse proxy.
 | [HTTP API](docs/en/api.md) | Every endpoint with examples |
 | [Development](docs/en/development.md) | Building, testing, CI, releases, contributing |
 | [Benchmarks](docs/en/benchmarks.md) | Accuracy and resource usage on an Orange Pi Zero 3 |
+| [Changelog](CHANGELOG.md) | Release history and notable changes |
+
+## Contributing
+
+Bug reports, pull requests, and translations are welcome. See [Development](docs/en/development.md) for local setup, tests, and CI checks.
+
+## License
+
+Licensed under the [MIT License](LICENSE).

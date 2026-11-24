@@ -2,6 +2,7 @@
 name = "netrack"
 version = "0.2.1"
 edition = "2024"
+license = "MIT"
 
 [lib]
 name = "netrack"
