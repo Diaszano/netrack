@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Cross-compiles on the build host (any arch) for the target arch with zig as
 # C compiler/linker, then ships a static musl binary in a scratch image.
-FROM --platform=$BUILDPLATFORM rust:1.99-alpine AS builder
+FROM --platform=$BUILDPLATFORM rust:1.100-alpine AS builder
 ARG TARGETARCH
 RUN apk add --no-cache zig musl-dev ca-certificates \
  && rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl
