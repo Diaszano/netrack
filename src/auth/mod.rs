@@ -2,7 +2,8 @@ pub mod lockout;
 pub mod routes;
 
 use argon2::Argon2;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode, header};
 use axum::middleware::Next;
@@ -22,12 +23,9 @@ pub struct AuthContext {
 }
 
 pub fn hash_password(password: &str) -> anyhow::Result<String> {
-    let salt_bytes: [u8; 16] = rand::random();
-    let salt = SaltString::encode_b64(&salt_bytes)
-        .map_err(|e| anyhow::anyhow!("failed to encode salt: {e}"))?;
-    let argon2 = Argon2::default();
-    let hash = argon2
-        .hash_password(password.as_bytes(), &salt)
+    // Random salt from the OS RNG (argon2 `getrandom` feature).
+    let hash = Argon2::default()
+        .hash_password(password.as_bytes())
         .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))?
         .to_string();
     Ok(hash)
