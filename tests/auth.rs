@@ -886,3 +886,16 @@ async fn secure_cookie_flag() {
         }
     }
 }
+
+#[test]
+fn hash_round_trips_and_verifies_hashes_from_argon2_0_5() {
+    let hash = netrack::auth::hash_password("secret123").unwrap();
+    assert!(hash.starts_with("$argon2id$"));
+    assert!(netrack::auth::verify_password("secret123", &hash));
+    assert!(!netrack::auth::verify_password("wrong", &hash));
+
+    // Stored by a release built with argon2 0.5; must keep working after upgrades.
+    let old = "$argon2id$v=19$m=19456,t=2,p=1$B2Vb0FG2c1e7IZoSEbtGEw$0M+/MbNfL/gc62+eaUdgAmcorfCR60Ne/IeWlAJBePE";
+    assert!(netrack::auth::verify_password("netrack-0.5", old));
+    assert!(!netrack::auth::verify_password("netrack-0.6", old));
+}
