@@ -1,13 +1,19 @@
+<div align="center">
+
 # netrack
 
 [English](README.md) · **Português (Brasil)**
 
-Monitor de velocidade de internet auto-hospedado, escrito em Rust. O netrack executa testes de
-velocidade de forma agendada (**Cloudflare**, **LibreSpeed** ou **Ookla Speedtest CLI**), guarda o
-histórico em SQLite e serve uma interface web responsiva, uma API HTTP JSON e um endpoint
-Prometheus, tudo a partir de um único binário estático (imagem `scratch` de ~11 MB) para
-`linux/amd64` e `linux/arm64`. Roda com folga em placas da classe do Raspberry Pi: menos de 8 MB
-de RAM em repouso em um Orange Pi Zero 3.
+[![CI](https://img.shields.io/github/actions/workflow/status/Diaszano/netrack/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/Diaszano/netrack/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Diaszano/netrack?style=flat-square)](https://github.com/Diaszano/netrack/releases)
+[![Platforms](https://img.shields.io/badge/Docker-amd64%20%7C%20arm64-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/Diaszano/netrack/pkgs/container/netrack)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+
+</div>
+
+Monitor de velocidade de internet auto-hospedado em Rust, com interface web responsiva, API HTTP JSON e observabilidade Prometheus/OpenTelemetry em um único binário estático.
+
+Executa testes agendados (**Cloudflare**, **LibreSpeed** ou **Ookla Speedtest CLI**), armazena o histórico em SQLite e é distribuído em uma imagem `scratch` de ~11 MB para `linux/amd64` e `linux/arm64` — consumindo menos de 8 MB de RAM em repouso em um Orange Pi Zero 3.
 
 ![Visão geral](docs/images/pt-BR/overview.png)
 
@@ -34,18 +40,6 @@ de RAM em repouso em um Orange Pi Zero 3.
 - **Controle de acesso:** sem senha, leitura pública ou totalmente protegido (Argon2id, bloqueio
   de login).
 
-## Capturas de tela
-
-| Estatísticas | Histórico |
-|---|---|
-| ![Estatísticas](docs/images/pt-BR/statistics.png) | ![Histórico](docs/images/pt-BR/history.png) |
-| **Servidores** | **Integrações** |
-| ![Servidores](docs/images/pt-BR/servers.png) | ![Integrações](docs/images/pt-BR/integrations.png) |
-| **Nós** | **Ajustes** |
-| ![Nós](docs/images/pt-BR/nodes.png) | ![Ajustes](docs/images/pt-BR/settings.png) |
-
-<p align="center"><img src="docs/images/pt-BR/mobile-overview.png" alt="Visão geral no celular" width="300"></p>
-
 ## Início rápido
 
 ```bash
@@ -57,9 +51,25 @@ docker run -d --name netrack --network host \
   ghcr.io/diaszano/netrack:latest
 ```
 
-Abra `http://<host>:5216`. `--network host` faz o teste medir a interface de rede real do host.
-Veja [Instalação](docs/pt-BR/installation.md) para Docker Compose, compilação a partir do código-fonte
-e uso atrás de um proxy reverso.
+Abra `http://<host>:5216` (ou verifique `curl http://localhost:5216/healthz`).
+
+- Ajuste `TZ` para o seu fuso horário IANA (ex.: `America/Sao_Paulo`).
+- O container roda como UID `65534` (`nobody`), então o diretório `./data` montado via bind mount precisa pertencer a `65534:65534` (com volume nomeado do Docker não é preciso usar `chown`).
+- `--network host` permite medir a interface de rede real do host no Linux. Em rede bridge (ou Docker Desktop), troque `--network host` por `-p 5216:5216`.
+
+Veja [Instalação](docs/pt-BR/installation.md) para Docker Compose, compilação a partir do código-fonte e uso atrás de um proxy reverso.
+
+## Capturas de tela
+
+| Estatísticas | Histórico |
+|---|---|
+| ![Estatísticas](docs/images/pt-BR/statistics.png) | ![Histórico](docs/images/pt-BR/history.png) |
+| **Servidores** | **Integrações** |
+| ![Servidores](docs/images/pt-BR/servers.png) | ![Integrações](docs/images/pt-BR/integrations.png) |
+| **Nós** | **Ajustes** |
+| ![Nós](docs/images/pt-BR/nodes.png) | ![Ajustes](docs/images/pt-BR/settings.png) |
+
+<p align="center"><img src="docs/images/pt-BR/mobile-overview.png" alt="Visão geral no celular" width="300"></p>
 
 ## Documentação
 
@@ -76,3 +86,12 @@ e uso atrás de um proxy reverso.
 | [API HTTP](docs/pt-BR/api.md) | Todos os endpoints, com exemplos |
 | [Desenvolvimento](docs/pt-BR/development.md) | Compilação, testes, CI, releases, contribuição |
 | [Benchmarks](docs/pt-BR/benchmarks.md) | Precisão e uso de recursos em um Orange Pi Zero 3 |
+| [Changelog](CHANGELOG.md) | Histórico de releases e mudanças relevantes |
+
+## Contribuição
+
+Relatos de bugs, pull requests e traduções são bem-vindos. Veja [Desenvolvimento](docs/pt-BR/development.md) para configuração local, testes e checagens de CI.
+
+## Licença
+
+Distribuído sob a [Licença MIT](LICENSE).
