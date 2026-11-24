@@ -22,6 +22,8 @@ jobs:
     outputs:
       release_created: ${{ steps.rp.outputs.release_created }}
       tag_name: ${{ steps.rp.outputs.tag_name }}
+      # Bare semver ("0.2.1"); tag_name is "netrack-v0.2.1", which metadata-action can't parse.
+      version: ${{ steps.rp.outputs.version }}
     steps:
       # Opens/updates a release PR from the Conventional Commits on main (bumps Cargo.toml,
       # Cargo.lock and CHANGELOG.md). Merging it creates the tag and the GitHub release.
@@ -58,9 +60,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}},value=${{ needs.release-please.outputs.tag_name }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release-please.outputs.tag_name }}
-            type=semver,pattern={{major}},value=${{ needs.release-please.outputs.tag_name }},enable=${{ !startsWith(needs.release-please.outputs.tag_name, 'v0.') }}
+            type=semver,pattern={{version}},value=${{ needs.release-please.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release-please.outputs.version }}
+            type=semver,pattern={{major}},value=${{ needs.release-please.outputs.version }},enable=${{ !startsWith(needs.release-please.outputs.version, '0.') }}
             type=raw,value=latest
 
       - uses: docker/build-push-action@v7
